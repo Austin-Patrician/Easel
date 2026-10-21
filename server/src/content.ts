@@ -283,7 +283,7 @@ export function deletePersona(name: string): void {
 
 const VALUE_OK = /^[A-Za-z0-9_.:/@+\-=~,%?#[\]()!*]*$/;
 const ENV_ALLOWED =
-  /^(EASEL_|IMG_|VIDEO_|MUSIC_|VOICE_|GEMINI_|MINERU_|OPENAI_|ANTHROPIC_|OPENROUTER_|DASHSCOPE_|ARK_|VOLC_|SILICONFLOW_|XHS_|DOUYIN_|BILI_|WECHAT_|WX_|KLING_|AGNES_|FISH_|MINIMAX_|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)/;
+  /^(EASEL_|IMG_|VIDEO_|MUSIC_|VOICE_|GEMINI_|MINERU_|OPENAI_|ANTHROPIC_|OPENROUTER_|DASHSCOPE_|ARK_|VOLC_|SILICONFLOW_|XHS_|DOUYIN_|BILI_|WECHAT_|WX_|KLING_|AGNES_|FISH_|MINIMAX_|MIMO_|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)/;
 
 export function saveEnvUpdates(updates: Record<string, string>): void {
   const envFile = path.join(PROFILES_DIR, "..", ".env");

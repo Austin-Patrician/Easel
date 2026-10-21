@@ -1,39 +1,46 @@
 # Known Issues
 
-This page tracks known issues relevant to using Easel, along with recommended workarounds. If you hit something not listed here, please open an [Issue](https://github.com/ZJU-REAL/Easel/issues).
+This page lists known Easel issues and workarounds. If your problem is not covered, please open an [Issue](https://github.com/ZJU-REAL/Easel/issues).
 
 ---
 
-## Duplicate reply after an "ask_user" prompt in the CLI chat
+## Platform login and account verification
 
-- **Scope**: `easel chat` (terminal chat) only. **The Web workspace is unaffected.**
-- **Symptom**: After the Agent raises an `ask_user` prompt and you answer it, the Agent's next reply may be rendered twice in the terminal (the content is correct — it just shows up twice).
-- **Nature**: This is a **display-only** issue. It does not affect the actual conversation content, asset generation, or publishing results.
+- **Waiting forever after scanning a QR code**: scanning is not login completion; confirm in the mobile app. Easel marks success only when the platform API returns the current account or the page clearly shows a logged-in view.
+- **Avatar or name belongs to another account**: account cards read only the current account region or official account API, never the admin avatar or unrelated users in the feed.
+- **Identity is blank after a successful scan**: the login browser must save and release its profile directory before verification. Network errors and blank pages keep the last verified identity instead of reporting logout.
+- **QR refresh or network interruption**: clicking login again terminates the old login process first, then requests a new QR code. If retries keep failing, check the server's network access to the platform domains.
+- **Xiaohongshu reports an IP risk**: the platform may apply risk controls to data-center networks or automation. Verify the site is reachable from a trusted network; on a desktop, run `xhs_publish.py login --headed --no-proxy` to see the platform's original message. Never share cookies or browser profiles.
+- **WeChat Official Account is not logged in**: publishing uses a separate QR session. Log in on the Accounts page before automated publishing.
 
-### Root cause
+---
 
-The issue lives in the **session projection** logic of upstream [OpenClaw](https://www.npmjs.com/package/openclaw), not in the Easel repository.
+## Models and chat
 
-`easel chat` runs `openclaw tui` under the hood, and OpenClaw's gateway-client rebuilds the transcript in the terminal. When a live reply is mistakenly matched against another row (e.g. the `ask_user` prompt row) and the two do not share a transcript identity, the projection re-inserts the reply, causing the duplicate render.
+- **No model available**: run `pi` and `/login`, or set `EASEL_DIRECT_API_KEY`, `EASEL_DIRECT_API_BASE_URL`, and `EASEL_DIRECT_API_MODEL` in `.env`.
+- **Third-party OpenAI-compatible endpoint times out**: make sure the base URL includes `/v1`, the model supports streaming and tool calls, and local endpoints bypass external HTTP proxies.
+- **Continue after a disconnect**: the web app replays events from `outputs/_pi/jobs/<turnId>.jsonl`, so a refresh does not lose completed content.
+- **A tool was denied**: check the pi sandbox permission in Settings. `read-only` blocks writes and command execution; switch to `workspace-write` to run project scripts.
+- **An old session cannot continue**: histories from non-pi runtimes are not migrated. Create a new pi session.
 
-We verified this root cause and reproduced it in upstream regression tests (3 related cases failed before the fix and all pass after it).
+---
 
-### Upstream fix status
+## Media and publishing
 
-The fix has been submitted to OpenClaw. Tracking PRs:
+- **Python dependencies are missing**: run `bash setup.sh`, or `.venv/bin/python -m pip install -e .`.
+- **Publishing times out**: video processing, uploads, and platform review can exceed a single request budget. Verify the media plays and its size is reasonable, then retry.
+- **How to use a manual publish package**: unzip it, paste the title/body on the official platform page, upload the files in `media/`, review the preview, and publish yourself. Exporting is not publishing.
+- **Automated publishing risk**: automated publishing performs real account actions and platforms may require SMS verification or trigger risk controls. Review content with `EASEL_PUBLISH_MODE=manual` first.
 
-- openclaw#144730
-- openclaw#144892
+---
 
-The fix uses a four-layer strategy: unique full-content match, required terminal evidence, a tentative recovery record, and keeping a distinct later final visible when tentative recovery cannot represent it.
+## When reporting an issue
 
-### Workaround and upgrade
+Include:
 
-- **Recommended**: use the **Web workspace** (`easel web`, `http://localhost:7860` by default). The Web backend renders from the raw event stream itself and does not go through the session-projection logic above, so it is **unaffected** by this issue — and it offers a more complete experience (conversations, assets, accounts, profiles, content library, and publishing management) than the CLI.
-- If you prefer `easel chat`: once upstream ships a release with the fix, upgrading OpenClaw resolves it:
+- OS, Node.js, and Python versions;
+- `easel doctor` output;
+- the last few dozen lines of redacted `outputs/_pi/jobs/*.jsonl` or platform logs;
+- reproduction steps and expected behavior.
 
-  ```bash
-  npm i -g openclaw@latest
-  ```
-
-- Easel installs the OpenClaw global CLI (a prebuilt artifact), so we **do not vendor the patch inside the Easel repo**; instead we track the latest upstream release. `easel doctor` already checks the minimum OpenClaw version (≥ 2026.6.11) and prompts users to upgrade when it is too old.
+Remove cookies, API keys, QR tokens, account identities, and full login redirect URLs before posting.

@@ -12,7 +12,7 @@
 - **免 AppID/AppSecret、免 IP 白名单**，未认证号也能用；
 - 官方开发者 API（AppID/AppSecret + 出口 IP 白名单）保留为 `--official-api` 回退，前端 UI 默认隐藏。
 
-平台标识 `wechat-oa`，web 默认 `:7860`，OpenClaw gateway 端口由 OpenClaw 自行分配（`easel` profile → `37289`，非 `18789`），Easel 自动解析。
+平台标识 `wechat-oa`，Web 默认监听 `127.0.0.1:7860`，可通过 `EASEL_HOST` / `EASEL_PORT` 调整。
 
 ---
 
@@ -44,18 +44,18 @@
 
 ---
 
-## 3. Web 后端 `web/app.py`（backend 类型 `wechat-oa`）
+## 3. TypeScript 后端（backend 类型 `wechat-oa`）
 
-- 平台注册：`LOGIN_RUNNERS["wechat-oa"] = {"name": "微信公众号", "backend": "wechat-oa"}`。
+- 平台注册：`server/src/domain.ts` 的登录 runner 与 `server/src/routes/accounts.ts` 的账号列表共同维护 `wechat-oa`。
 - **登录（扫码）**：`POST /api/accounts/wechat-oa/mp-login`（起 `weixin_mp_stats.py login`，出二维码到
   `outputs/_login/wechat-oa-mp.png`，状态写 `wechat-oa-mp.json`）+ `GET .../mp-login/status`（轮询）。
-- **登录态判定**：`_account_logged_in` / `whoami` 对 wechat-oa **以 mp 会话为准**
+- **登录态判定**：账号状态与 `whoami` 对 wechat-oa **以 mp 会话为准**
   （`wechat-oa-mp.json` state==success）；AppID 凭证仅作旧配置兜底。
-- **退出**：`api_logout` 清 AppID 凭证 + 停后台登录进程 + 删 `wechat-oa-mp.json`/png/log + 删
+- **退出**：`DELETE /api/logout/wechat-oa` 清 AppID 凭证 + 停后台登录进程 + 删 `wechat-oa-mp.json`/png/log + 删
   `WeixinMpProfile`（真正退登）。
-- **发布**：`api_publish` 的 `wechat-oa` 分支 → 检查 mp 会话已登录 → 正文 MD 写临时文件 →
+- **发布**：`server/src/routes/publishing.ts` 的 `wechat-oa` 分支 → 检查 mp 会话已登录 → 正文 MD 写临时文件 →
   `html_converter.py` 转公众号 HTML → `weixin_mp_stats.py publish`（会话）。
-- **数据中心**：`api_analytics` 的 `wechat-oa` 分支 → `weixin_mp_stats.py stats`。`ANALYTICS_PLATFORMS` 含 `wechat-oa`。
+- **数据中心**：`server/src/routes/accounts.ts` 的 analytics 分支 → `weixin_mp_stats.py stats`。
 - **凭证端点**（AppID，UI 默认隐藏，保留兼容）：`GET/POST /api/accounts/wechat-oa/credentials`。
 
 代理：以上调用默认直连；若设了 `EASEL_PROXY` / `https_proxy` 则通过其转发（供受限网络使用）。
@@ -95,8 +95,8 @@
 # web（受限网络时按需 export EASEL_PROXY / https_proxy）
 easel web --port 7860
 
-# gateway
-bash scripts/gateway.sh restart
+# 或直接启动 TypeScript 后端
+npm start
 ```
 
 **使用流程**：账号页「登录」扫码（管理员微信）→ 发布中心选公众号，填标题/正文/封面 → 发草稿箱 →
@@ -119,6 +119,7 @@ bash scripts/gateway.sh restart
 - `skills/shared/scripts/weixin_mp_stats.py` —— 会话引擎（login/whoami/stats/publish）
 - `skills/builtin/skill-wechat-publisher/scripts/publish.py` —— 发布器（默认会话，`--official-api` 回退）
 - `skills/builtin/skill-wechat-publisher/SKILL.md` —— skill 说明
-- `web/app.py` —— 后端端点（mp-login / publish / analytics / logout / credentials）
+- `server/src/routes/accounts.ts` —— mp-login / analytics / logout / credentials 端点
+- `server/src/routes/publishing.ts` —— publish 端点
 - `web/frontend/src/components/{AccountsPage,ProfilePage,PublishPage,DashboardPage}.tsx`、`lib/api.ts`
 - `scripts/wechat-egress.sh` —— 固定出口代理（仅官方 API + IP 白名单场景需要）

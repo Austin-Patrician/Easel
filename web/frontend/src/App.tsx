@@ -50,9 +50,8 @@ export default function App() {
   const [selectedPersona, setSelectedPersona] = useState('');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [gatewayStatus, setGatewayStatus] = useState('connecting');
-  const [apiDirect, setApiDirect] = useState(false);
-  const [agentRuntime, setAgentRuntime] = useState('openclaw');
+  const [runtimeStatus, setRuntimeStatus] = useState('connecting');
+  const [agentRuntime, setAgentRuntime] = useState('pi');
   const [showRecommend, setShowRecommend] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -82,7 +81,7 @@ export default function App() {
   // 挂载时决定进哪个会话。规则：
   //  - 同一标签刷新（sessionStorage 记着本标签的会话）→ 直接续上（同标签不算冲突）。
   //  - 新开标签/窗口 → 若「上次活跃会话」正被另一个存活标签占用（跨标签 BroadcastChannel 探测），
-  //    则开一个新会话，避免两个窗口撞同一会话 → openclaw 并发 takeover 崩溃（后端还有 flock 兜底）。
+  //    则开一个新会话，避免两个窗口同时跑同一 pi 会话；后端会对同一会话串行化。
   //  - 否则续上上次会话（保留「关页重开续接」的体验）。
   const TAB_SESSION_KEY = 'easel_tab_session';
   useEffect(() => {
@@ -162,7 +161,7 @@ export default function App() {
     }
   }, [activeSessionId]);
 
-  // Fetch status on mount — 真实反映 gateway 状态 + 首次引导检测
+  // Fetch status on mount — 真实反映 pi 运行时状态 + 首次引导检测
   useEffect(() => {
     // 先问 bootstrap：模型没配好时，画像推荐弹窗要让位 —— 一次只问用户一件事，
     // 而且画像配得再好，没有模型也对话不了。
@@ -173,9 +172,8 @@ export default function App() {
     Promise.all([fetchStatus(), bootstrap])
       .then(([data, boot]) => {
         setPersonas(data.personas || []);
-        setGatewayStatus(data.gateway ? 'connected' : 'disconnected');
-        setApiDirect(data.transport === 'api');
-        setAgentRuntime(data.runtime || 'openclaw');
+        setRuntimeStatus(data.ready ? 'connected' : 'disconnected');
+        setAgentRuntime(data.runtime || 'pi');
         const unconfigured = !!boot && boot.modelConfigured === false;
         if (unconfigured) {
           // 直接打开设置面板（它默认就停在「模型配置 · 对话」页）
@@ -189,7 +187,7 @@ export default function App() {
         }
       })
       .catch(() => {
-        setGatewayStatus('disconnected');
+        setRuntimeStatus('disconnected');
       });
   }, []);
 
@@ -284,7 +282,7 @@ export default function App() {
     });
     streamAcc.current[sessionId] = { content: '', thinking: '', steps: [], questions: [] };
     setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [] } }));
-    // 打字机队列：流式事件按批到达（OpenClaw 攒批），前端按字符节奏显示，体验逐字浮现。
+    // 打字机队列：流式事件按批到达，前端按字符节奏显示，体验逐字浮现。
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
     streamCtl.current[sessionId] = streamChat(
@@ -296,7 +294,7 @@ export default function App() {
         ensureTypingPump(sessionId);
       },
       (sessionKey) => {
-        // done 不能立即 flush——token 和 done 几乎同时到达（OpenClaw 攒批），
+        // done 不能立即 flush——token 和 done 可能几乎同时到达，
         // 立即 flush 会把整包瞬间冲出，打字机白做。等队列吐完再落盘。
         const waitAndFinalize = () => {
           if (typingBuf.current[sessionId]) {
@@ -464,12 +462,12 @@ export default function App() {
         const a = streamAcc.current[sessionId]; if (!a) return;
         if (a.questions.some((x) => x.id === q.id)) return;
         if (answeredRef.current.has(q.id)) return;   // 本会话已答过：不再重现
-        // 重放可能带已解决/已过期的旧问题（gateway 15s 后即清理）——先查状态只留 pending；
+        // 重放可能带已解决/已过期的旧问题（服务端过期后即清理）——先查状态只留 pending；
         // 查询失败时保留原样（宁显示不丢题）。
         void questionStatus([q.id]).then((st) => {
           const s = st[q.id]?.status;
           // 只显示仍 pending 的：answered/expired/cancelled/not_found/unknown 一律过滤
-          //（unknown 通常=问题已从 gateway 清理，即已答或已过期，重放旧事件时不该重现）
+          //（unknown 通常=问题已从服务端清理，即已答或已过期，重放旧事件时不该重现）
           if (s && s !== 'pending' || answeredRef.current.has(q.id)) return;
           const a2 = streamAcc.current[sessionId]; if (!a2) return;
           if (a2.questions.some((x) => x.id === q.id)) return;
@@ -635,7 +633,7 @@ export default function App() {
     try { sessionStorage.removeItem(`easel_pending_turn:${id}`); } catch { /* ignore */ }
 
     if (target?.sessionKey) {
-      // Do not delete OpenClaw's session record while its agent is still
+      // Do not delete the pi session record while its agent is still
       // writing to it; the stop endpoint waits for backend cleanup first.
       void stopped.then(() => deleteRemoteSession(target.sessionKey as string)).catch(() => {});
     }
@@ -704,8 +702,7 @@ export default function App() {
         return (
           <DashboardPage
             persona={selectedPersona}
-            gatewayStatus={gatewayStatus}
-            apiDirect={apiDirect}
+            runtimeStatus={runtimeStatus}
             agentRuntime={agentRuntime}
             onNavigate={setCurrentPage}
             onUseTopic={handleUseTopic}
@@ -714,7 +711,6 @@ export default function App() {
       case 'chat':
         return activeSession ? (
           <ChatPage
-            apiDirect={apiDirect}
             key={activeSession.id}
             session={activeSession}
             stream={streams[activeSession.id]}
@@ -803,8 +799,7 @@ export default function App() {
         onSessionRename={handleSessionRename}
         onSessionArchive={handleSessionArchive}
         onNewChat={handleNewChat}
-        gatewayStatus={gatewayStatus}
-        apiDirect={apiDirect}
+        runtimeStatus={runtimeStatus}
         agentRuntime={agentRuntime}
         onOpenSettings={() => setSettingsOpen(true)}
       />
@@ -844,16 +839,15 @@ export default function App() {
       {settingsOpen && (
         <SettingsPanel
           banner={needModelSetup
-            ? '还没有配置模型 —— 填一个 API Key 才能开始对话。保存后会自动同步配置并重启网关。'
+            ? '还没有配置模型 —— 填一个 API Key 才能开始对话。保存后会自动载入新的模型配置。'
             : ''}
           onClose={() => {
             setSettingsOpen(false);
             setNeedModelSetup(false);
             void fetchStatus().then((data) => {
-              setApiDirect(data.transport === 'api');
-              setAgentRuntime(data.runtime || 'openclaw');
-              setGatewayStatus(data.gateway ? 'connected' : 'disconnected');
-            }).catch(() => setGatewayStatus('disconnected'));
+                    setAgentRuntime(data.runtime || 'pi');
+              setRuntimeStatus(data.ready ? 'connected' : 'disconnected');
+            }).catch(() => setRuntimeStatus('disconnected'));
           }}
         />
       )}

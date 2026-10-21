@@ -23,10 +23,10 @@ const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
 test('approval cards preserve long multiline commands and both permission choices', () => {
-  const command = `Codex 请求额外权限（仅本次）：python /data/project/Easel/${'long_segment_'.repeat(200)}/render.py\n第二行 <script>alert(1)</script>`;
+  const command = `pi 请求额外权限（仅本次）：python /data/project/Easel/${'long_segment_'.repeat(200)}/render.py\n第二行 <script>alert(1)</script>`;
   const rendered = renderToStaticMarkup(React.createElement(component.exports.default, {
     questions: [{
-      id: 'codex-approval',
+      id: 'permission-approval',
       questions: [{
         questionId: 'permission',
         header: '执行授权',

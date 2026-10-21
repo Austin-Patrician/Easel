@@ -43,36 +43,42 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Install Easel and test dependencies
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: python -m pip install --prefer-binary -e . pytest
-      # 不要改回 `pytest tests/`：技能自带的用例在 skills/**/tests/ 下，限定目录就把它们
-      # （目前 38 个，skill-wechat-publisher 那批）整批排除在 CI 之外 —— 本地 `pytest` 全绿、
-      # CI 也全绿，但那部分从来没在 CI 上跑过。从根目录跑一次，两边都覆盖。
-      - name: Run unit tests
+      # 技能自带的用例在 skills/**/tests/ 下；从根目录跑一次，覆盖 tests/ 与技能测试。
+      - name: Run Python tests
         timeout-minutes: 10
-        run: python -m pytest -v -o faulthandler_timeout=90
+        run: python -m pytest -q -o faulthandler_timeout=90
 
-  harness-portability:
-    name: Agent settings (${{ matrix.os }}, Python ${{ matrix.python }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ['3.10', '3.12']
-    runs-on: ${{ matrix.os }}
+  typescript:
+    name: TypeScript and frontend
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-node@v6
         with:
-          python-version: ${{ matrix.python }}
-      - name: Install settings test dependencies
-        run: python -m pip install pytest fastapi httpx uvicorn sse-starlette python-multipart requests websocket-client cryptography
-      - name: Verify user installations and settings
-        run: python -m pytest -q tests/test_runtime_env.py tests/test_openclaw_cmd_resolution.py tests/test_openclaw_cmd_shim.py tests/test_agent_harnesses.py tests/test_pr1.py tests/test_installation.py tests/test_setup_optional_harness.py
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/frontend/package-lock.json
+      - name: Install Node dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix web/frontend ci --no-audit --no-fund
+      - name: Typecheck server
+        run: npm run typecheck
+      - name: Lint frontend
+        run: npm --prefix web/frontend run lint
+      - name: Frontend regression tests
+        run: node --test tests/frontend/*.test.mjs
+      - name: Build server and frontend
+        run: npm run build
+      - name: Server unit tests
+        run: npm run test:server
 
-  # 两个安装脚本此前在 CI 里零覆盖 —— setup.ps1 把 setup.sh 的版本假设 bug 原样复刻了一
-  # 遍却没人发现，根因就在这里。这个 job 全程在 ubuntu 上跑（shellcheck 与 PSScriptAnalyzer
-  # 都是跨平台的），~90s，不下载任何东西，适合挂在每个 PR 上。
+  # 两个安装脚本此前在 CI 里零覆盖。这个 job 全程在 ubuntu 上跑（shellcheck 与
+  # PSScriptAnalyzer 都是跨平台的），不下载项目依赖，适合挂在每个 PR 上。
   lint-installers:
     name: Installer lint
     runs-on: ubuntu-latest
@@ -81,10 +87,9 @@ jobs:
 
       - name: Bash syntax
         run: |
-          for f in setup.sh scripts/gateway.sh agents/sync.sh; do
-            echo "== bash -n $f"
-            bash -n "$f"
-          done
+          bash -n setup.sh
+          bash -n scripts/cleanup_outputs.sh
+          bash -n scripts/wechat-egress.sh
 
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@master
@@ -125,54 +130,9 @@ jobs:
           if ($r) { $r | Format-Table -AutoSize RuleName,Severity,ScriptName,Line,Message }
           if ($r | Where-Object Severity -eq 'Error') { throw 'PSScriptAnalyzer 报告了 Error' }
 
-  # setup.ps1 的容忍层必须在**真实的 Windows PowerShell 5.1** 上验证一次。
-  # 作者的开发机是 Linux，pwsh 7 虽然能装但复现不了 5.1 的关键行为：Stop 模式下
-  # 原生命令的 stderr 会被包成 ErrorRecord 抛 NativeCommandError。实测把修复
-  # （ErrorActionPreference=Continue）去掉，pwsh 7 上测试照样通过 —— 所以这个
-  # job 是该缺陷类唯一真正的把关点。5.1 是 Windows 自带版本，必须先跑它。
-  powershell-tolerance:
-    name: PowerShell tolerance (${{ matrix.shell }})
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]   # powershell = Windows PowerShell 5.1
-    steps:
-      - uses: actions/checkout@v7
-      - name: Run tolerance probe (Windows PowerShell)
-        if: matrix.shell == 'powershell'
-        shell: powershell
-        run: ./tests/ps_tolerance_probe.ps1
-      - name: Run tolerance probe (PowerShell Core)
-        if: matrix.shell == 'pwsh'
-        shell: pwsh
-        run: ./tests/ps_tolerance_probe.ps1
-
-  # 现有 test job 从不构建前端，而 doctor.py 把 web/frontend/dist/index.html 当作安装成功的
-  # 判据之一 —— TypeScript 一旦编译不过，CI 全绿而用户装完打开是空白页。
-  frontend:
-    name: Frontend build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web/frontend
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/frontend/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - name: Frontend regression tests
-        run: node --test ../../tests/frontend/*.test.mjs
-      - run: npm run build
-
   # 真·跑一遍安装。只在 nightly / 手动触发 / 打了 ci:full-install 标签的 PR 上跑：
-  # 一次完整安装要下 ~1GB（pip 的 opencv/faster-whisper/rembg + npm + Chromium），
+  # 一次完整安装要下 ~1GB（pip 的 opencv/rembg + npm + Chromium），
   # windows-latest 上 I/O 更慢且按 2 倍计费，挂在每个 PR 上并不现实。
-  # 日常 PR 由 lint-installers 与 pytest 里的 check-mode 回归把关。
   install-real:
     name: Real install (${{ matrix.os }})
     if: >-
@@ -194,53 +154,37 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # Noninteractive setup.sh reuses a venv but does not create one.
-      # Keep installation and the doctor step on the same Python environment.
-      - name: Create installation environment (Linux)
-        if: runner.os == 'Linux'
-        run: python -m venv .venv
-
       # CI 里没有真 key。doctor 的认证检查是静态的（只判「非空且非占位符」），
       # 给一个语法合法的假值即可走通整条配置链路。
       - name: Seed .env
         shell: bash
         run: |
           cp .env.example .env
-          printf '\nEASEL_LLM_API_KEY=sk-ci-not-a-real-key-0123456789\n' >> .env
-          printf 'EASEL_LLM_BASE_URL=https://example.invalid/v1\n' >> .env
-          printf 'CLAUDE_MODEL=anthropic/claude-sonnet-4-6\n' >> .env
+          printf '\nEASEL_DIRECT_API_KEY=sk-ci-not-a-real-key-0123456789\n' >> .env
+          printf 'EASEL_DIRECT_API_BASE_URL=https://example.invalid/v1\n' >> .env
+          printf 'EASEL_DIRECT_API_MODEL=ci-placeholder\n' >> .env
 
-      - name: Install (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: bash setup.sh --openclaw
+      - name: Install (Linux)
+        if: runner.os == 'Linux'
+        run: bash setup.sh
 
       - name: Install (Windows)
         if: runner.os == 'Windows'
         shell: powershell       # 5.1：Windows 自带版本，必须按它验证
-        run: ./setup.ps1 -OpenClaw -NonInteractive
+        run: powershell -ExecutionPolicy Bypass -File ./setup.ps1
 
-      # 这一条是重点：setup 必须可重入。2026.9.x 拒绝「会删掉已存在子键的整块写入」，
-      # 于是首次安装能过、第二次重跑必失败 —— 两边都真实发生过，只有跑第二遍才看得见。
-      - name: Install again (idempotency)
-        if: runner.os != 'Windows'
-        run: bash setup.sh --openclaw
+      # 这条是重点：setup 必须可重入。npm ci / venv / .env 创建都要能重复跑。
+      - name: Install again (idempotency, Linux)
+        if: runner.os == 'Linux'
+        run: bash setup.sh
 
       - name: Install again (idempotency, Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: ./setup.ps1 -OpenClaw -NonInteractive
+        run: powershell -ExecutionPolicy Bypass -File ./setup.ps1
 
       - name: doctor
         shell: bash
         run: |
           if [ -x .venv/bin/easel ]; then .venv/bin/easel doctor
           else .venv/Scripts/easel.exe doctor; fi
-
-      - name: Upload install report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: install-report-${{ matrix.os }}
-          path: |
-            outputs/_install/last-install.json
-          if-no-files-found: warn

@@ -1,0 +1,37 @@
+{
+  "name": "easel",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Easel — social content workspace with pi as the only agent kernel",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build:server": "tsc -p server/tsconfig.json",
+    "build:web": "npm --prefix web/frontend run build",
+    "build": "npm run build:server && npm run build:web",
+    "start": "node server/dist/index.js",
+    "dev": "tsx watch server/src/index.ts",
+    "typecheck": "tsc -p server/tsconfig.json --noEmit",
+    "test:server": "node --test server/dist/pi/host.test.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^1.3.0",
+    "archiver": "^8.0.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "typebox": "^1.3.27",
+    "yaml": "^2.9.0",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^8.0.0",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.13.2",
+    "@types/yauzl": "^3.4.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

@@ -7,9 +7,9 @@ import type { JobView } from './EnvBoard';
 import {
   fetchEnvTools, startEnvInstall, fetchEnvJob,
   fetchModelChannels, runChannelSelftest, saveModelConfig,
-  fetchLocalAgents, enableLocalAgent, fetchAvailableModels,
+  fetchAvailableModels,
 } from '../lib/api';
-import type { EnvTool, ModelRow, SelftestResult, LocalAgentInfo } from '../lib/api';
+import type { EnvTool, ModelRow, SelftestResult } from '../lib/api';
 import { IconSlidersHorizontal, IconPackage, IconEllipsis } from './settingsIcons';
 
 interface Props {
@@ -53,17 +53,11 @@ async function fetchWithRetry<T>(fn: () => Promise<T>, tries = 4, timeoutMs = 18
 /** 后端放在 model/baseUrl 里的展示占位串——提交前要清掉，它们不是真实配置值。 */
 const PLACEHOLDERS = new Set(['—', '官方', '（未配置）', '本机', '内建默认']);
 
-const hhmm = (ts: number) => {
-  const d = new Date(ts * 1000);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-};
-
 /** 设置（统一入口）：竖＝功能分类（模型配置 / 环境安装 / 更多设置），横＝模型六通道。 */
 export default function SettingsPanel({ onClose, banner = '' }: Props) {
   const [sec, setSec] = useState<Sec>('model');
   const [chan, setChan] = useState<Chan>('chat');
-  const [harness, setHarness] = useState('');
-  const [selectedHarness, setSelectedHarness] = useState('');
+  const [harness, setHarness] = useState('pi');
 
   // ── 环境安装（引擎真实数据） ──────────────────────────────
   const [tools, setTools] = useState<EnvTool[]>([]);
@@ -162,14 +156,6 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
   const [selftest, setSelftest] = useState<{ testedAt: number; byBase: Record<string, SelftestResult> } | null>(null);
   const [testing, setTesting] = useState(false);
   const [selftestNote, setSelftestNote] = useState('');
-  // 本机 agent CLI（Claude Code / Gemini CLI…）：装了并登录过就免 API key
-  const [localAgents, setLocalAgents] = useState<LocalAgentInfo[]>([]);
-  const [localAgentsErr, setLocalAgentsErr] = useState('');
-  const [enabling, setEnabling] = useState('');
-  // 每个本机 agent 行上选中的模型（'' = 用该家默认）。
-  const [laModels, setLaModels] = useState<Record<string, string>>({});
-  const [localAgentNote, setLocalAgentNote] = useState('');
-
   // 拉取模型列表：{ 通道#行号 → { loading, models, err } }。结果按 baseUrl 落 localStorage（7 天过期），
   // 刷新页面/重开设置不用重新拉。
   // 键必须带通道前缀：六个通道共用 renderBoard，裸行号会让「对话」通道拉到的
@@ -187,29 +173,6 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
   const [protoDd, setProtoDd] = useState<Record<string, boolean>>({});
   const protoRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const modelCellRefs = useRef<Record<string, HTMLSpanElement | null>>({});
-
-  useEffect(() => {
-    if (harness !== 'openclaw') return;
-    let alive = true;
-    fetchWithRetry(() => fetchLocalAgents(), 3, 10000)
-      .then((d) => { if (alive) setLocalAgents(d.agents || []); })
-      .catch((e) => { if (alive) setLocalAgentsErr(e instanceof Error ? e.message : '探测失败'); });
-    return () => { alive = false; };
-  }, [harness]);
-
-  const doEnableAgent = useCallback(async (id: string, model = '') => {
-    setEnabling(id);
-    setLocalAgentNote('');
-    try {
-      const d = await enableLocalAgent(id, model);
-      setLocalAgentNote(d.note || '已接入');
-      setLocalAgents((as) => as.map((a) => (a.id === id ? { ...a, configured: true } : a)));
-    } catch (e) {
-      setLocalAgentNote(e instanceof Error ? e.message : '接入失败');
-    } finally {
-      setEnabling('');
-    }
-  }, []);
 
   const pullModels = useCallback(async (key: string, r: ModelRow) => {
     setModelLists((m) => ({ ...m, [key]: { loading: true, models: m[key]?.models || [], err: '' } }));
@@ -234,8 +197,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
     let alive = true;
     if (!harness) return;
     setModelLoading(true);
-    const configuration = selectedHarness === 'api' || selectedHarness === 'openclaw' ? selectedHarness : undefined;
-    fetchWithRetry(() => fetchModelChannels(configuration), 5, 15000)
+    fetchWithRetry(() => fetchModelChannels(), 5, 15000)
       .then((d) => {
         if (!alive) return;
         setChatRows(d.channels.chat.rows || []);
@@ -251,7 +213,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
       .catch((e) => { if (alive) setModelErr(e instanceof Error ? e.message : '模型配置读取失败'); })
       .finally(() => { if (alive) setModelLoading(false); });
     return () => { alive = false; };
-  }, [harness, selectedHarness]);
+  }, [harness]);
 
   const doSelftest = useCallback(async (channel: string) => {
     setTesting(true);
@@ -270,7 +232,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
     }
   }, [refreshEnv]);
 
-  // ── 模型配置可编辑（v2）：保存到 .env / openclaw ──────────
+  // ── 模型配置可编辑：媒体与转写密钥写入 .env ──────────
   const [saving, setSaving] = useState(false);
   const [savedNote, setSavedNote] = useState('');
 
@@ -351,54 +313,11 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
     'direct-api': { model: true, base: true },
     openai: { model: true, base: true },
     relay: { model: true, base: true },
-    // anthropic 也要能改 Base URL：官方直连之外，中转站/自建网关/兼容代理都靠它
+    // 兼容不同供应商的 Base URL
     // （后端 _SLOT_ENV_KEYS 已含 anthropic，改地址必须重填 Key 那道闸同样生效）。
     anthropic: { model: true, base: true },
     siliconflow: { model: false, base: true },
     custom: { model: true, base: true },
-  };
-
-  const addProvider = () => {
-    setChatRows((rs) => [...rs, {
-      slot: 'custom', order: 0, name: '', sub: '自定义', type: 'openai',
-      model: '', baseUrl: '', keyMasked: '', role: '备', result: '待保存',
-      thinking: false, thinkingFormat: 'openai',
-    }]);
-  };
-
-  const setPrimaryRow = (i: number) =>
-    setChatRows((rs) => rs.map((r, j) => (r.slot ? { ...r, role: j === i ? '主' : '备' } : r)));
-
-  const removeRow = (i: number) => {
-    // 删行后整体索引前移一位：把该通道的会话态键同步平移，
-    // 否则「已拉取/错误」标记会错挂到别行上。localStorage 缓存按 baseUrl，不受影响。
-    const shiftBoardKeys = (board: string) => {
-      const prefix = `${board}#`;
-      const shift = <T,>(rec: Record<string, T>): Record<string, T> => {
-        const next: Record<string, T> = {};
-        for (const [key, val] of Object.entries(rec)) {
-          if (!key.startsWith(prefix)) { next[key] = val; continue; }
-          const idx = Number(key.slice(prefix.length));
-          if (Number.isNaN(idx)) { next[key] = val; continue; }
-          if (idx === i) continue;                 // 被删行的状态随之丢弃
-          next[prefix + (idx > i ? idx - 1 : idx)] = val;
-        }
-        return next;
-      };
-      setModelLists(shift);
-      setOpenDd(shift);
-      setProtoDd(shift);
-    };
-    shiftBoardKeys('chat');
-    setChatRows((rs) => {
-      const gone = rs[i];
-      const left = rs.filter((_, j) => j !== i);
-      if (gone && gone.role === '主') {
-        const first = left.findIndex((r) => r.slot);
-        if (first >= 0) left[first] = { ...left[first], role: '主' };
-      }
-      return left;
-    });
   };
 
   const updateRow = (
@@ -664,7 +583,6 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
     );
   };
 
-  const chatOk = chatRows.length > 0 && !chatRows[0].result.includes('缺');
   const transOk = transRows.length > 1 && transRows[1].result.includes('已配置');
 
   return (
@@ -682,16 +600,16 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
             <button
               className="btn btn-sm btn-primary"
               onClick={() => void saveCurrent()}
-              disabled={saving || modelLoading || sec !== 'model' || (chan === 'chat' && (selectedHarness !== harness || !['api', 'openclaw'].includes(harness)))}
-              title={chan === 'chat' && !['api', 'openclaw'].includes(harness) ? '请使用下方「保存底座」保存原生配置' : undefined}
+              disabled={saving || modelLoading || sec !== 'model' || chan === 'chat'}
+              title={chan === 'chat' ? 'pi 模型请使用下方「保存配置」保存' : undefined}
             >
               {saving ? '保存中…' : '保存配置'}
             </button>
             <button
               className="btn btn-sm"
               onClick={() => void doSelftest(sec === 'model' ? chan : 'all')}
-              disabled={testing || modelLoading || selectedHarness !== harness || (!['api', 'openclaw'].includes(harness) && (sec !== 'model' || chan === 'chat'))}
-              title={!['api', 'openclaw'].includes(harness) ? '原生对话请发送消息或运行 easel ping 验证' : undefined}
+              disabled={testing || modelLoading || (sec === 'model' && chan === 'chat')}
+              title={sec === 'model' && chan === 'chat' ? 'pi 对话请发送消息或运行 easel ping 验证' : undefined}
             >
               {testing ? '自测中…' : '全部自测'}
             </button>
@@ -737,76 +655,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                 </div>
                 {savedNote ? <div className={`save-note${savedNote.startsWith('保存失败') || savedNote.startsWith('没有') ? ' err' : ''}`}>{savedNote}</div> : null}
 
-                {chan === 'chat' && <HarnessSettings onChange={setHarness} onSelect={setSelectedHarness} />}
-                {chan === 'chat' && (selectedHarness === 'api' || selectedHarness === 'openclaw') && (
-                  <section className="st-panel active">
-                    <div className="panel-top">
-                      <strong>{selectedHarness === 'api' ? '仅聊天模式 API 配置' : 'OpenClaw API 配置'}</strong>
-                      <span className={`pill ${chatOk ? 'ok' : 'off'}`}><span className="dot" />{chatOk ? '已配置' : '未配置'}</span>
-                      {selftest && <span className="desc">上次自测 {hhmm(selftest.testedAt)}</span>}
-                      <span className="spacer" />
-                      <button className="btn btn-sm" onClick={() => void doSelftest('chat')} disabled={testing || selectedHarness !== harness}>自测本通道</button>
-                    </div>
-                    {renderBoard(chatRows, { onRow: (i, p) => updateRow(setChatRows, i, p), onPrimary: setPrimaryRow, onRemove: removeRow }, 'chat')}
-                    {selectedHarness === 'api' ? <div className="foot-note">此通道使用独立的 EASEL_DIRECT_API_* 配置，与原有 OpenAI 通道分开保存。支持聊天、画像、文本和图片附件（需模型支持图片）。没有本机文件、浏览器或技能执行工具。</div>
-                      : <div className="add-row" onClick={addProvider}>＋ 添加供应商（填名称 / 模型 / Base URL / Key；点「设为主」切换生效通道）</div>}
-                    {harness === 'openclaw' && (() => {
-                      // 本机 agent 区块：装了 Claude Code / Gemini CLI 并登录过的用户不需要填 API Key。
-                      // 只展示「已装」的行 —— 没装的用户看一眼全是灰的只会困惑。
-                      const shown = localAgents.filter((a) => a.installed);
-                      if (localAgentsErr) return <div className="foot-note">本机 agent 探测失败：{localAgentsErr}</div>;
-                      if (!shown.length) return null;
-                      const usable = shown.filter((a) => a.supported);
-                      return (
-                        <div className="local-agents">
-                          <div className="la-head">
-                            本机 Agent
-                            <span className="desc">
-                              {usable.length
-                                ? `检测到可免 API Key 使用：${usable.map((a) => a.label).join('、')}`
-                                : '检测到的 CLI 暂无底座后端，仍需填 API Key'}
-                            </span>
-                          </div>
-                          {shown.map((a) => (
-                            <div className="la-row" key={a.id}>
-                              <span className="la-name">{a.label}<small>{a.path || a.command}</small></span>
-                              <span className={`la-state ${a.configured ? 'ok' : a.supported ? 'todo' : 'na'}`}>
-                                {a.configured ? '已接入' : a.supported ? '可接入' : '暂不支持'}
-                              </span>
-                              <span className="la-act">
-                                {a.supported && (a.models?.length ?? 0) > 0 && (
-                                  <select
-                                    className="la-model"
-                                    value={laModels[a.id] ?? ''}
-                                    title="选择该 agent 使用的模型"
-                                    onChange={(e) => setLaModels((m) => ({ ...m, [a.id]: e.target.value }))}
-                                  >
-                                    <option value="">默认模型</option>
-                                    {(a.models ?? []).map((m) => (
-                                      <option key={m.id} value={m.id}>{m.name}</option>
-                                    ))}
-                                  </select>
-                                )}
-                                {a.supported && (
-                                  <button
-                                    className="btn btn-sm"
-                                    disabled={enabling === a.id}
-                                    title={a.configured ? '重新应用所选模型（写入 openclaw.json 主模型）' : '写入 openclaw.json，免 API Key 接入'}
-                                    onClick={() => void doEnableAgent(a.id, laModels[a.id] ?? '')}
-                                  >{enabling === a.id ? '接入中…' : a.configured ? '应用模型' : '一键接入'}</button>
-                                )}
-                              </span>
-                              <span className="la-hint">{a.loginHint}</span>
-                            </div>
-                          ))}
-                          {localAgentNote && <div className="foot-note">{localAgentNote}</div>}
-                        </div>
-                      );
-                    })()}
-                    <div className="foot-note">改完点右上角「保存配置」（key 留空=不改）；自动降级链随统一网关接入开放。</div>
-                  </section>
-                )}
-
+                {chan === 'chat' && <HarnessSettings onChange={setHarness} onSelect={() => {}} />}
                 {chan === 'transcribe' && (
                   <section className="st-panel active">
                     <div className="panel-top">
@@ -852,7 +701,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                       <span className="spacer" />
                     </div>
                     {renderBoard(mediaRows.video || [], { onRow: (i, p) => updateMediaRow('video', i, p), onPrimary: (i) => setMediaPrimary('video', i), media: true }, 'video')}
-                    <div className="foot-note">脚本按「主」provider 出片；同类多家的自动降级随统一网关接入开放。</div>
+                    <div className="foot-note">脚本按「主」provider 出片；同类多家的自动降级将在后续版本接入。</div>
                   </section>
                 )}
 
@@ -895,7 +744,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                   <span className="desc">同一个面板，以后放更多设置</span>
                 </div>
                 <div className="board">
-                  <div className="stub-row"><span className="tag2">预留</span>网关参数（端口 / 绑定 / 会话）<span className="future">就挂在这页旁边</span></div>
+                  <div className="stub-row"><span className="tag2">预留</span>服务参数（端口 / 绑定 / 会话）<span className="future">就挂在这页旁边</span></div>
                   <div className="stub-row"><span className="tag2">预留</span>通用设置（语言 / 更新 / 数据目录）<span className="future">按需加</span></div>
                 </div>
                 <div className="foot-note">扩展方式：在这个面板里加标签即可——模型、环境已各就位，其余按需加。</div>
@@ -905,9 +754,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
         </div>
 
         <div className="settings-foot">
-          {harness === 'api' || harness === 'openclaw'
-            ? 'ⓘ 供应商配置保存到 .env；API 直连仅聊天、无工具。切换底座或对话模式后请新建对话。'
-            : 'ⓘ 原生 Agent 认证由其 CLI 管理；「保存底座」只保存底座、模型覆盖和权限设置。媒体通道仍单独配置。'}
+          ⓘ pi 是唯一 Agent 底座。模型认证由 pi 的登录或 .env 管理；「保存配置」保存模型覆盖和工具权限。
         </div>
       </div>
     </div>

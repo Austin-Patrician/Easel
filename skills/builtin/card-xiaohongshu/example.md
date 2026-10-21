@@ -19,7 +19,7 @@
 省 80% token + 保持设计风格。
 
 ## 卡 5: 复用本地 session
-不用 API Key, 让本地 Claude / Cursor / Codex 跑。0 边际成本,
+不用手写代码, 让本地 AI 工作台跑。0 模板成本,
 速度比远程 API 快得多。
 
 ## 总结

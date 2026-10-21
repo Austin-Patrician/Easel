@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blue)](https://claude.ai/code)
 [![Themes](https://img.shields.io/badge/themes-6%20+%20generator-059669)](references/theme-index.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Agents](https://img.shields.io/badge/Claude%20Code%20·%20Codex%20·%20Cursor-supported-8b5cf6.svg)](#-quick-start)
+[![Agents](https://img.shields.io/badge/AI%20Agent-supported-8b5cf6.svg)](#-quick-start)
 
 English ｜ [中文](README.md)
 
@@ -20,7 +20,7 @@ English ｜ [中文](README.md)
 
 ---
 
-A layout Skill for AI agents (Claude Code / Codex / Cursor …). You write Markdown; it renders HTML with **fully inlined styles that survive pasting into the WeChat editor** — auto section numbers, keyword underlines, intro cards, code blocks, images, merged author signature — with scripts that deterministically enforce WeChat's platform limits.
+A layout Skill for AI agents (任意 AI Agent …). You write Markdown; it renders HTML with **fully inlined styles that survive pasting into the WeChat editor** — auto section numbers, keyword underlines, intro cards, code blocks, images, merged author signature — with scripts that deterministically enforce WeChat's platform limits.
 
 ## ✨ Features
 
@@ -94,7 +94,7 @@ npx skills add https://github.com/isjiamu/gzh-design-skill
 git clone https://github.com/isjiamu/gzh-design-skill.git ~/.claude/skills/gzh-design
 ```
 
-Or just ask **any agent** (Claude Code / Codex / Cursor …):
+Or just ask **any agent** (任意 AI Agent …):
 
 > Please find and install the skill at https://github.com/isjiamu/gzh-design-skill
 
@@ -138,7 +138,7 @@ Source gate flags `white-space:pre` (blank bloat), full-border dashed frames in 
 - **Paste-safe by design** — fully inlined styles + every text node in `<span leaf="">`, avoiding exactly what the WeChat editor strips.
 - **Quality by script, not discipline** — two gates (`component_lint` at source + `validate_gzh_html` on output) deterministically check platform rules and punctuation.
 - **Model-agnostic** — layout logic lives in libraries and scripts, not any one model's tricks; Claude / GPT / Gemini / Chinese models all produce the same result.
-- **Agent-friendly** — input and output are plain-text Markdown / HTML any agent can read, write, edit and verify — native to Claude Code / Codex / Cursor.
+- **Agent-friendly** — input and output are plain-text Markdown / HTML any agent can read, write, edit and verify — native to 任意 AI Agent.
 
 ## 📁 Structure
 

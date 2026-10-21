@@ -8,7 +8,6 @@ import type { UploadedFile } from '../lib/api';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
 
 interface ChatPageProps {
-  apiDirect: boolean;
   session: ChatSession;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
   onSend: (displayText: string, attachments?: UploadedFile[]) => void;
@@ -36,7 +35,7 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onStop, onResend, onQuestionAnswered }: ChatPageProps) {
+export default function ChatPage({ session, stream, onSend, onStop, onResend, onQuestionAnswered }: ChatPageProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -141,8 +140,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
         </div>
       )}
       <div className="composer-top">
-        {apiDirect ? <span className="composer-hint">API 直连 · 文字与附件分析</span>
-          : <BrushEntry onPick={(t) => { setInput(t); requestAnimationFrame(() => textareaRef.current?.focus()); }} />}
+        <BrushEntry onPick={(t) => { setInput(t); requestAnimationFrame(() => textareaRef.current?.focus()); }} />
         <textarea
           ref={textareaRef}
           className="chat-input"
@@ -185,11 +183,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
             <span>Easel</span>
           </div>
           <h1 className="chat-hero-title">{greeting()}</h1>
-          <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'
-            : '从选题到发布，一站式帮你把想法做成能发的内容。'}</p>
+          <p className="chat-hero-sub">从选题到发布，一站式帮你把想法做成能发的内容。</p>
           {inputBox(true)}
           <div className="suggestions">
-            {SUGGESTIONS.filter((s) => !apiDirect || ['写小红书文案', '口播脚本'].includes(s.title)).map((s) => (
+            {SUGGESTIONS.map((s) => (
               <button key={s.title} className="card card-hover suggestion-card"
                 onClick={() => { if (!isStreaming) onSend(s.prompt); }}>
                 <span className="suggestion-icon">{s.icon}</span>
@@ -220,7 +217,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
             let actions;
             if (isFinal) {
               const copy = () => navigator.clipboard?.writeText(msg.content);
-              // 只允许对「最后一轮」重试，契合 OpenClaw append-only 模型（不改写历史）；已移除编辑
+              // 只允许对「最后一轮」重试，pi 会话历史不改写；已移除编辑
               const isLastFinal = i === session.messages.length - 1;
               if (msg.role === 'user') {
                 actions = {

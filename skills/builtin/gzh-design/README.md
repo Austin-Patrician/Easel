@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blue)](https://claude.ai/code)
 [![Themes](https://img.shields.io/badge/themes-6%20+%20generator-059669)](references/theme-index.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Agents](https://img.shields.io/badge/Claude%20Code%20·%20Codex%20·%20Cursor-supported-8b5cf6.svg)](#-快速开始)
+[![Agents](https://img.shields.io/badge/AI%20Agent-supported-8b5cf6.svg)](#-快速开始)
 
 [English](README.en.md) ｜ 中文
 
@@ -20,7 +20,7 @@
 
 ---
 
-一个给 AI Agent（Claude Code / Codex / Cursor 等）用的公众号排版 Skill。你写完 Markdown，它按你选的主题，生成**样式全内联、粘贴到公众号编辑器不掉格式**的 HTML——自动编章节号、标关键词下划线、配引言卡与目录、处理代码块和图片、合并作者签名，并用脚本确定性地兜住公众号平台的各种限制。
+一个给 AI Agent（任意 AI Agent 等）用的公众号排版 Skill。你写完 Markdown，它按你选的主题，生成**样式全内联、粘贴到公众号编辑器不掉格式**的 HTML——自动编章节号、标关键词下划线、配引言卡与目录、处理代码块和图片、合并作者签名，并用脚本确定性地兜住公众号平台的各种限制。
 
 ## ✨ 核心特性
 
@@ -100,7 +100,7 @@ npx skills add https://github.com/isjiamu/gzh-design-skill
 
 ### 方式二：让 AI 自己装
 
-对**任意 Agent**（Claude Code / Codex / Cursor 等）说一句：
+对**任意 Agent**（任意 AI Agent 等）说一句：
 
 > 请帮我查找并自动安装 https://github.com/isjiamu/gzh-design-skill 这个 skill
 
@@ -156,7 +156,7 @@ python3 scripts/validate_gzh_html.py out.html  # 产物关：扫最终 HTML 合�
 - **样式粘贴不掉** — 全内联样式 + 每个文字节点 `<span leaf="">` 包裹，专门规避公众号会过滤的写法，粘进去不塌。
 - **质量靠脚本不靠自觉** — 双关卡（源头 `component_lint` + 产物 `validate_gzh_html`）确定性检查平台红线和标点，不靠模型「记得住」。
 - **换模型不走样** — 排版逻辑全沉淀在组件库和脚本里，不依赖某家模型，Claude / GPT / Gemini / 国产模型都能跑出一致效果。
-- **Agent 友好** — 输入输出全是纯文本 Markdown / HTML，任何 Agent 都能读、写、改、验，天然适配 Claude Code / Codex / Cursor。
+- **Agent 友好** — 输入输出全是纯文本 Markdown / HTML，任何 Agent 都能读、写、改、验，天然适配 任意 AI Agent。
 
 ## 📁 目录结构
 
@@ -243,7 +243,7 @@ A：不会。所有样式内联、文字 `<span leaf="">` 包裹，这正是校�
 A：两种方式。① **让 AI 生成**：说「按这个风格 / 这张图生成一套公众号主题」，它会走 `references/theme-generator.md` 的流程生成组件库、登记并复用。② **手写贡献**：照 `CONTRIBUTING.md` 的「新增一套主题风格」，跑通可验证循环即可提 PR。
 
 **Q：只能在 Claude Code 用吗？**
-A：不限。任何能读取 Skill 目录的 Agent（Codex / Cursor 等）都能用，工作流在 `SKILL.md`。
+A：不限。任何能读取 Skill 目录的 Agent（Claude Code / Cursor 等）都能用，工作流在 `SKILL.md`。
 
 **Q：对模型有要求吗？国产模型行不行？**
 A：不挑模型，**国内外模型都能跑出一致效果**。排版逻辑全部沉淀在组件库和校验脚本里，不依赖某家模型的特殊能力——Claude、GPT、Gemini，以及 DeepSeek、Kimi、通义千问、智谱 GLM 等国产模型都可以。模型只负责按规则填充内容，硬约束由校验脚本确定性兜底，所以换模型不会导致排版走样。

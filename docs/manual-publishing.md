@@ -48,9 +48,9 @@ EASEL_PUBLISH_MODE=manual
 ## 验证
 
 ```bash
-python -m pytest tests/test_manual_publishing.py
-cd web/frontend
+.venv/bin/python -m pytest -q tests/
 npm run build
+npm --prefix web/frontend run lint
 ```
 
 浏览器验收可用测试草稿依次验证：默认进入自动路径、可切换到人工路径、切换后文案保留、未审核按钮禁用、审核后复制及导出可用、修改内容后重新审核、导出不代表已发布，以及人工专用配置下不能切回自动路径。无需上传或发布任何社媒内容。

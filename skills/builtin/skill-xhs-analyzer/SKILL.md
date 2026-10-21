@@ -1,28 +1,16 @@
 ---
-# ⚠️ name 保持 "redbook" —— clawhub 安装（`clawhub install redbook`）与下方 metadata.openclaw
-#    install 块均以此 name 为键；改名会破坏 OpenClaw/ClawHub 安装。目录名 skill-xhs-analyzer
-#    与此 name 有意不一致，勿"对齐"目录名而改动 name。
+# name 保留 "redbook"：上游 npm 包与 CLI 都以 redbook 为键，目录名与此有意不一致。
 name: redbook
 description: >-
   小红书内容分析：搜索笔记、拉取互动数据、分析爆款规律、创作者画像、限流检测，支持 CLI 自动化操作。
   当用户说"小红书数据分析""小红书爆款分析""笔记数据""小红书限流检测""小红书创作者画像""分析小红书账号"时使用。
   发布与日常互动运营请用 skill-xhs-publisher。
 layer: attribute
-metadata:
-  openclaw:
-    requires:
-      bins:
-        - redbook
-    install:
-      - kind: node
-        package: "@lucasygu/redbook"
-        bins: [redbook]
-    homepage: https://github.com/lucasygu/redbook
 ---
 
 # Redbook — 小红书内容分析 CLI
 
-用 `redbook` CLI 搜索笔记、读内容、分析创作者、提取爆款规律、研究选题。**OpenClaw 用户：** `clawhub install redbook` 或 `npm install -g @lucasygu/redbook --ignore-scripts`。Easel 环境里推荐 `--ignore-scripts`，避免上游 postinstall 额外写入带发布/评论能力的技能。
+用 `redbook` CLI 搜索笔记、读内容、分析创作者、提取爆款规律、研究选题。安装：`npm install -g @lucasygu/redbook --ignore-scripts`。推荐 `--ignore-scripts`，避免上游 postinstall 额外写入带发布/评论能力的技能。
 
 ## ⚠️ 环境依赖
 
@@ -31,7 +19,7 @@ metadata:
 | 依赖 | 说明 |
 |------|------|
 | Node.js ≥ 22 | 运行 `@lucasygu/redbook` CLI |
-| `redbook` binary | 经 `clawhub install redbook` / `npm install -g @lucasygu/redbook --ignore-scripts` 安装 |
+| `redbook` binary | `npm install -g @lucasygu/redbook --ignore-scripts` |
 | 登录 cookie | 优先 `REDBOOK_COOKIE_STRING`；其次 `REDBOOK_COOKIE_FILE` / `~/.redbook/cookies.json`；也可用已登录浏览器（桌面环境） |
 | puppeteer-core + marked | 仅 `render` 卡片渲染需要（可选） |
 

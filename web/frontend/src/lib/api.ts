@@ -25,7 +25,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export interface StatusResponse {
-  gateway: boolean;
+  ready: boolean;
   transport?: string;
   runtime?: string;
   skills: SkillItem[];
@@ -36,7 +36,6 @@ export interface HarnessSettingsResponse {
   runtime: string;
   models: Record<string, string>;
   sandbox: string;
-  codex_auto_approve: boolean;
   locked: boolean;
   agents: { id: string; label: string; protocol: string; installed: boolean; install_hint: string }[];
 }
@@ -55,11 +54,11 @@ export function fetchHarnessModels(runtime: string): Promise<{ runtime: string; 
   return request(`/api/settings/harness/models/${encodeURIComponent(runtime)}`, { method: 'POST' });
 }
 
-export function saveHarnessSettings(runtime: string, model: string, sandbox: string, codexAutoApprove?: boolean): Promise<HarnessSettingsResponse> {
+export function saveHarnessSettings(runtime: string, model: string, sandbox: string): Promise<HarnessSettingsResponse> {
   return request('/api/settings/harness', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runtime, model, sandbox, codex_auto_approve: codexAutoApprove }),
+    body: JSON.stringify({ runtime, model, sandbox }),
   });
 }
 
@@ -334,7 +333,7 @@ export function deleteOutput(path: string): Promise<{ ok: boolean; deleted: stri
 
 export interface UploadedFile { id: string; name: string; path: string; }
 
-/** OpenClaw ask_user 问答题（SSE question 事件 payload）。 */
+/** pi ask_user 问答题（SSE question 事件 payload）。 */
 export interface ChatQuestionOption { label: string; description?: string; }
 export interface ChatQuestionItem {
   questionId: string;
@@ -344,7 +343,7 @@ export interface ChatQuestionItem {
   multiSelect?: boolean;
 }
 export interface ChatQuestion {
-  id: string;              // gateway question record id (ask_...)
+  id: string;              // question record id (ask_...)
   questions: ChatQuestionItem[];
   expiresAtMs?: number;
 }
@@ -868,7 +867,7 @@ export function saveModelConfig(channel: string, rows: ModelSaveRow[]): Promise<
 export interface ModelChannelRows { rows: ModelRow[] }
 
 export interface ModelChannelsResponse {
-  transport?: 'api' | 'openclaw';
+  transport?: 'pi';
   channels: {
     chat: ModelChannelRows;
     transcribe: ModelChannelRows;
@@ -880,15 +879,8 @@ export interface ModelChannelsResponse {
   primary: string;
 }
 
-export function fetchModelChannels(runtime?: string): Promise<ModelChannelsResponse> {
-  return request(`/api/settings/models${runtime ? `?runtime=${encodeURIComponent(runtime)}` : ''}`);
-}
-
-export function saveChatTransport(transport: 'api' | 'openclaw'): Promise<ModelChannelsResponse> {
-  return request('/api/settings/chat/transport', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transport }),
-  });
+export function fetchModelChannels(): Promise<ModelChannelsResponse> {
+  return request('/api/settings/models');
 }
 
 // （保存接口见上方 saveModelConfig）
@@ -900,44 +892,6 @@ export function runChannelSelftest(channel: string): Promise<{ channel: string; 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ channel }),
-  });
-}
-
-export interface LocalAgentModel {
-  id: string;
-  name: string;
-  contextWindow?: number | null;
-}
-
-export interface LocalAgentInfo {
-  id: string;
-  label: string;
-  installed: boolean;
-  command: string;
-  path: string;
-  openclawProvider: string | null;
-  configProvider?: string | null;
-  supported: boolean;
-  configured: boolean;
-  usableWithoutKey: boolean;
-  loginHint: string;
-  models?: LocalAgentModel[];
-}
-
-export function fetchLocalAgents(): Promise<{
-  agents: LocalAgentInfo[];
-  installedCount: number;
-  usableWithoutKeyCount: number;
-  usableWithoutKey: string[];
-}> {
-  return request('/api/settings/local-agents');
-}
-
-export function enableLocalAgent(id: string, model = ''): Promise<{ ok: boolean; note: string; agent: LocalAgentInfo }> {
-  return request('/api/settings/local-agents/enable', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, model }),
   });
 }
 

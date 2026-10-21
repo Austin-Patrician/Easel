@@ -2,6 +2,35 @@
 
 All notable changes to Easel are documented in this file.
 
+> Entries before 0.4.0 describe historical features and runtimes that have since been removed. They are kept for release history only and are not current setup instructions.
+
+## [0.4.0] - 2026-10-21
+
+### Breaking Changes
+
+- **pi is now the only agent kernel.** OpenClaw, chat-only API mode, Codex, OpenCode, and generic ACP were removed from the backend, API, UI, CLI, installer, and documentation. There is no fallback runtime.
+- The HTTP backend was rewritten in TypeScript (`server/`), using the pi TypeScript SDK directly. `web/app.py` and the FastAPI/uvicorn backend were removed.
+- Existing non-pi session histories are not migrated. New pi sessions start clean.
+
+### Added
+
+- pi extensions for `ask_user` (bridged to SSE question cards) and tool permissions (`read-only` / `workspace-write`).
+- TypeScript CLI commands: `chat`, `skill`, `doctor`, `ping`, plus `easel web` as a thin Python launcher.
+- pi session persistence under `outputs/_pi/sessions/`, bindings under `outputs/_pi/bindings/`, and per-turn JSONL job logs for reconnect/replay.
+- `.env` `EASEL_DIRECT_API_*` is registered as the pi provider `easel-direct`; pi's own login and built-in providers also work.
+- Shared TypeScript routes for accounts, calendar, publishing, profiles, and media model channels.
+
+### Changed
+
+- `setup.sh` / `setup.ps1` now install Node/npm dependencies, create `.venv`, install Python media dependencies, build the backend and frontend, and optionally start the server.
+- README, prompt-stack, skill spec, known issues, and contribution docs now describe the pi-only architecture.
+- Python dependencies are limited to media, browser, and publishing tools.
+
+### Removed
+
+- `easel/harnesses/`, `easel/commands/`, `easel/direct_api.py`, gateway/OpenClaw helpers, local agent discovery, the OpenClaw workspace sync scripts, and their obsolete tests.
+- Gateway scripts, tool-budget plugin fixtures, and the legacy FastAPI app.
+
 ## [0.3.0] - 2026-10-12
 
 ### Added

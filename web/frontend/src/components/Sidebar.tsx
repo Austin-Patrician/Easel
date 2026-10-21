@@ -26,8 +26,7 @@ interface SidebarProps {
   onSessionRename: (id: string, title: string) => void;
   onSessionArchive: (id: string, archived: boolean) => void;
   onNewChat: () => void;
-  gatewayStatus: string;
-  apiDirect: boolean;
+  runtimeStatus: string;
   agentRuntime: string;
   onOpenSettings: () => void;
 }
@@ -56,8 +55,7 @@ export default function Sidebar({
   onSessionRename,
   onSessionArchive,
   onNewChat,
-  gatewayStatus,
-  apiDirect,
+  runtimeStatus,
   agentRuntime,
   onOpenSettings,
 }: SidebarProps) {
@@ -173,11 +171,11 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-status">
-        <span className={`status-dot ${gatewayStatus === 'connected' ? '' : 'offline'}`} />
-        <span className="sidebar-status-text">{gatewayStatus === 'connected'
-          ? (apiDirect ? '仅聊天模式已配置' : agentRuntime !== 'openclaw' ? `${agentRuntime} CLI 已安装` : '网关已连接')
-          : gatewayStatus === 'disconnected'
-            ? (apiDirect ? 'API 配置不完整' : agentRuntime !== 'openclaw' ? `${agentRuntime} CLI 未配置` : '网关离线')
+        <span className={`status-dot ${runtimeStatus === 'connected' ? '' : 'offline'}`} />
+        <span className="sidebar-status-text">{runtimeStatus === 'connected'
+          ? (agentRuntime === 'pi' ? 'pi SDK 已连接' : `${agentRuntime} 已连接`)
+          : runtimeStatus === 'disconnected'
+            ? (agentRuntime === 'pi' ? 'pi 未就绪' : 'pi 未就绪')
             : '连接中…'}</span>
         <button className="settings-gear" onClick={onOpenSettings} title="设置（模型 · 环境 · 更多）">
           <IconGear size={13} /> 设置

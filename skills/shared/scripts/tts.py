@@ -53,6 +53,7 @@ COMMON_ZH_VOICES: list[tuple[str, str]] = [
 ]
 
 DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+EDGE_VOICE_NAMES = {name for name, _ in COMMON_ZH_VOICES}
 
 
 # ── 基础设施 ────────────────────────────────────────────────────────
@@ -209,18 +210,20 @@ def _closed_provider() -> str | None:
 
 
 def _closed_voice_id(voice: str | None) -> str | None:
-    """闭源音色 id：显式 voice 像闭源音色(含 : 或 /)就用它；否则 env VOICE_NARRATOR_VOICE_ID；
-    再否则 openai-compatible 用 CosyVoice2 沉稳男声 alex、xiaomi-mimo 用 mimo_default 作旁白默认；
-    其它 provider 交给 voice_clone 默认。"""
-    if voice and (":" in voice or "/" in voice):
+    """闭源音色 id：显式 voice 像闭源音色(含 : 或 /；xiaomi-mimo 用非 edge 音色名)就用它；
+    否则 env VOICE_NARRATOR_VOICE_ID；再否则 openai-compatible 用 CosyVoice2 沉稳男声 alex、
+    xiaomi-mimo 用 mimo_default 作旁白默认；其它 provider 交给 voice_clone 默认。"""
+    provider = _closed_provider()
+    if voice and (":" in voice or "/" in voice
+                  or (provider == "xiaomi-mimo" and voice not in EDGE_VOICE_NAMES)):
         return voice
     vid = (os.environ.get("VOICE_NARRATOR_VOICE_ID") or "").strip()
     if vid:
         return vid
-    if _closed_provider() == "openai-compatible":
+    if provider == "openai-compatible":
         model = (os.environ.get("VOICE_MODEL") or "").strip() or "FunAudioLLM/CosyVoice2-0.5B"
         return f"{model}:alex"
-    if _closed_provider() == "xiaomi-mimo":
+    if provider == "xiaomi-mimo":
         return (os.environ.get("MIMO_TTS_VOICE") or "").strip() or "mimo_default"
     return None
 

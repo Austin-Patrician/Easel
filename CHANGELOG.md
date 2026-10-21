@@ -30,6 +30,7 @@ All notable changes to Easel are documented in this file.
 ### Fixed
 
 - `setup.sh` / `setup.ps1` now install the Playwright Chromium build matching the installed Playwright version, so a Playwright upgrade no longer breaks QR login with a missing `chromium_headless_shell` executable. Use `--skip-browser` / `-SkipBrowser` to opt out.
+- The “还没有配置模型” banner now clears immediately after a pi provider is saved with usable models, instead of staying visible until the settings panel is closed.
 
 ### Removed
 

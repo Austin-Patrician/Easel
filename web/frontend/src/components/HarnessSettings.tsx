@@ -39,8 +39,9 @@ const API_LABELS: Record<string, string> = {
  * SDK. This panel therefore configures the pi model and its tool permission
  * boundary, not a runtime picker.
  */
-export default function HarnessSettings({ onChange }: {
+export default function HarnessSettings({ onChange, onModelConfigured }: {
   onChange: (runtime: string) => void;
+  onModelConfigured?: () => void;
 }) {
   const [settings, setSettings] = useState<HarnessSettingsResponse | null>(null);
   const [model, setModel] = useState('');
@@ -173,6 +174,7 @@ export default function HarnessSettings({ onChange }: {
       setCatalogs(result.models);
       const firstModel = result.provider?.models[0];
       if (!model && firstModel && result.provider) setModel(`${result.provider.id}/${firstModel}`);
+      if (result.models.length) onModelConfigured?.();
       setEditingProvider('');
       setProviderForm({ ...EMPTY_PROVIDER });
       setProviderNote('已写入 pi 的 models.json，下个对话回合即可使用；再点「保存配置」可把它设为当前模型。');

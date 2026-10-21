@@ -16,6 +16,8 @@ interface Props {
   onClose: () => void;
   /** 非空时在面板顶部显示一条提示条。首开未配置模型时由 App 传入。 */
   banner?: string;
+  /** 供应商保存成功且已有可用模型后，通知 App 清掉首次配置提示。 */
+  onModelConfigured?: () => void;
 }
 
 type Sec = 'model' | 'env' | 'more';
@@ -54,7 +56,7 @@ async function fetchWithRetry<T>(fn: () => Promise<T>, tries = 4, timeoutMs = 18
 const PLACEHOLDERS = new Set(['—', '官方', '（未配置）', '本机', '内建默认']);
 
 /** 设置（统一入口）：竖＝功能分类（模型配置 / 环境安装 / 更多设置），横＝模型六通道。 */
-export default function SettingsPanel({ onClose, banner = '' }: Props) {
+export default function SettingsPanel({ onClose, banner = '', onModelConfigured }: Props) {
   const [sec, setSec] = useState<Sec>('model');
   const [chan, setChan] = useState<Chan>('chat');
   const [harness, setHarness] = useState('pi');
@@ -655,7 +657,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                 </div>
                 {savedNote ? <div className={`save-note${savedNote.startsWith('保存失败') || savedNote.startsWith('没有') ? ' err' : ''}`}>{savedNote}</div> : null}
 
-                {chan === 'chat' && <HarnessSettings onChange={setHarness} />}
+                {chan === 'chat' && <HarnessSettings onChange={setHarness} onModelConfigured={onModelConfigured} />}
                 {chan === 'transcribe' && (
                   <section className="st-panel active">
                     <div className="panel-top">

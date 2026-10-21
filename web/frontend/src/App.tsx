@@ -841,6 +841,12 @@ export default function App() {
           banner={needModelSetup
             ? '还没有配置模型 —— 填一个 API Key 才能开始对话。保存后会自动载入新的模型配置。'
             : ''}
+          onModelConfigured={() => {
+            setNeedModelSetup(false);
+            void fetchStatus().then((data) => {
+              setRuntimeStatus(data.ready ? 'connected' : 'disconnected');
+            }).catch(() => setRuntimeStatus('disconnected'));
+          }}
           onClose={() => {
             setSettingsOpen(false);
             setNeedModelSetup(false);

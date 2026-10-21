@@ -141,7 +141,7 @@ async function doctor(): Promise<number> {
     const models = await listModels(runtime);
     output.write(`  models     ${models.length ? models.map((item) => item.id).slice(0, 8).join(", ") : "none"}\n`);
     if (!models.length) {
-      output.write("\n没有可用模型。运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。\n");
+      output.write("\n没有可用模型。在 Easel 设置页添加 pi 供应商、运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。\n");
       return 1;
     }
   } catch (error) {
@@ -172,7 +172,7 @@ const USAGE = `Easel CLI（pi SDK）
   easel ping
   easel web [--host HOST] [--port PORT]
 
-模型认证：运行 pi 并执行 /login，或在 .env 配置 EASEL_DIRECT_API_*。
+模型认证：在 Easel 设置页添加 pi 供应商，或运行 pi 并执行 /login，或在 .env 配置 EASEL_DIRECT_API_*。
 `;
 
 async function main(): Promise<number> {

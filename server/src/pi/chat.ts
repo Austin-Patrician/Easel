@@ -214,7 +214,7 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
       if (!model) {
         const available = await modelRuntime.getAvailable();
         if (available.length === 0) {
-          throw new Error("pi 还没有可用模型。请先运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。");
+          throw new Error("pi 还没有可用模型。请在设置页添加供应商、运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。");
         }
       }
 

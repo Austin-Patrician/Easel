@@ -18,6 +18,7 @@ All notable changes to Easel are documented in this file.
 - TypeScript CLI commands: `chat`, `skill`, `doctor`, `ping`, plus `easel web` as a thin Python launcher.
 - pi session persistence under `outputs/_pi/sessions/`, bindings under `outputs/_pi/bindings/`, and per-turn JSONL job logs for reconnect/replay.
 - `.env` `EASEL_DIRECT_API_*` is registered as the pi provider `easel-direct`; pi's own login and built-in providers also work.
+- Web model settings can now add, edit, and delete custom pi providers directly in `models.json` (provider ID, base URL, API protocol, API key, and model IDs). Changes take effect on the next chat turn without restarting Easel.
 - Shared TypeScript routes for accounts, calendar, publishing, profiles, and media model channels.
 
 ### Changed

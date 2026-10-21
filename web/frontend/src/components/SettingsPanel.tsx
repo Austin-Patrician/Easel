@@ -655,7 +655,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                 </div>
                 {savedNote ? <div className={`save-note${savedNote.startsWith('保存失败') || savedNote.startsWith('没有') ? ' err' : ''}`}>{savedNote}</div> : null}
 
-                {chan === 'chat' && <HarnessSettings onChange={setHarness} onSelect={() => {}} />}
+                {chan === 'chat' && <HarnessSettings onChange={setHarness} />}
                 {chan === 'transcribe' && (
                   <section className="st-panel active">
                     <div className="panel-top">

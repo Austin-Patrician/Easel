@@ -62,6 +62,54 @@ export function saveHarnessSettings(runtime: string, model: string, sandbox: str
   });
 }
 
+export interface PiProviderSummary {
+  id: string;
+  name: string;
+  baseUrl: string;
+  api: string;
+  models: string[];
+  keyMasked: string;
+  managed: boolean;
+}
+
+export interface PiProviderListResponse {
+  providers: PiProviderSummary[];
+  apis: string[];
+  authPath: string;
+  modelsPath: string;
+}
+
+export interface PiProviderMutationResponse extends PiProviderListResponse {
+  ok: boolean;
+  provider?: PiProviderSummary;
+  models: HarnessModel[];
+}
+
+export interface PiProviderInput {
+  id: string;
+  name: string;
+  baseUrl: string;
+  api: string;
+  apiKey: string;
+  models: string[];
+}
+
+export function fetchPiProviders(): Promise<PiProviderListResponse> {
+  return request('/api/settings/pi/providers');
+}
+
+export function savePiProvider(input: PiProviderInput): Promise<PiProviderMutationResponse> {
+  return request('/api/settings/pi/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export function deletePiProvider(id: string): Promise<PiProviderMutationResponse> {
+  return request(`/api/settings/pi/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 export interface PersonaItem {
   name: string;
   description: string;

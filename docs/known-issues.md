@@ -17,7 +17,7 @@
 
 ## 模型与对话
 
-- **还没有可用模型**：运行 `pi` 并执行 `/login`，或在 `.env` 配置 `EASEL_DIRECT_API_KEY`、`EASEL_DIRECT_API_BASE_URL`、`EASEL_DIRECT_API_MODEL`。
+- **还没有可用模型**：在「设置 → 模型配置 → 对话 → pi 供应商」添加供应商，或运行 `pi` 并执行 `/login`，或在 `.env` 配置 `EASEL_DIRECT_API_KEY`、`EASEL_DIRECT_API_BASE_URL`、`EASEL_DIRECT_API_MODEL`。
 - **第三方 OpenAI-compatible 端点超时**：确认 Base URL 包含 `/v1`，模型支持流式输出和工具调用；本地服务不要经过外部 HTTP 代理。
 - **对话中断后继续**：Web 会从 `outputs/_pi/jobs/<turnId>.jsonl` 重放已产生的事件；刷新页面不会丢失已完成的内容。
 - **工具被拒绝**：检查「设置 → pi」中的 sandbox 权限。`read-only` 会阻止写文件和执行命令；需要执行项目脚本时切换到 `workspace-write`。

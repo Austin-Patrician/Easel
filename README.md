@@ -53,7 +53,7 @@ TypeScript 后端 (Express)
 - **会话**：pi `SessionManager` 持久化到 `outputs/_pi/sessions/`，会话绑定在 `outputs/_pi/bindings/`。
 - **问答**：`ask_user` 由 pi 扩展注册，通过 SSE `question` 事件桥接到前端问题卡片。
 - **权限**：pi `tool_call` 扩展在工具执行前检查主机策略；拒绝即阻止执行。
-- **模型**：支持 pi 自己的登录/模型配置，也可把 `.env` 的 `EASEL_DIRECT_API_*` 注册为 pi provider `easel-direct`。
+- **模型**：支持 pi 自己的登录/模型配置，可在 Web 设置里直接维护 pi 的 `models.json`，也可把 `.env` 的 `EASEL_DIRECT_API_*` 注册为 pi provider `easel-direct`。
 - **复杂媒体与平台操作**：保留为 Python 脚本，由 TypeScript 后端按需调用。
 
 > 旧版非 pi 会话历史不会迁移。升级后新建的 pi 会话从干净状态开始。
@@ -121,6 +121,8 @@ EASEL_DIRECT_API_MODEL=gpt-4.1
 
 `EASEL_DIRECT_API_BASE_URL` 需要包含 `/v1` 这类 API 根路径，不要填完整的 `/chat/completions`。
 
+也可以完全在 Web 里配置：打开「设置 → 模型配置 → 对话」，在「pi 供应商」里填写供应商 ID、Base URL、API 类型、API Key 和模型 ID。Easel 会按 pi 的原生格式写入 `~/.pi/agent/models.json`（设置 `EASEL_PI_AGENT_DIR` 时写入该目录），保存后下个对话回合即可选用，无需重启 Easel。`easel-direct` 仍由 `.env` 的 `EASEL_DIRECT_API_*` 管理，在页面上只读。
+
 ### 启动
 
 ```bash
@@ -144,7 +146,7 @@ EASEL_HOST=0.0.0.0 EASEL_PORT=7860 npm start
 - **内容库**：统一归档图片、视频、音频与文档，支持预览、下载和删除保护。
 - **账号**：小红书、抖音、快手、视频号、知乎、B站、公众号的登录与状态检查。
 - **发布**：自动发布或人工审核包；人工模式只导出 ZIP，不接触平台登录态。
-- **模型设置**：pi 模型选择、媒体通道 Key、连通性自测。
+- **模型设置**：pi 模型选择、pi `models.json` 供应商管理、媒体通道 Key、连通性自测。
 
 ## CLI
 

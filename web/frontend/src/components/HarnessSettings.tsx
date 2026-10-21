@@ -1,7 +1,36 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchHarnessModels, fetchHarnessSettings, saveHarnessSettings } from '../lib/api';
-import type { HarnessModel, HarnessSettingsResponse } from '../lib/api';
+import {
+  deletePiProvider,
+  fetchHarnessModels,
+  fetchHarnessSettings,
+  fetchPiProviders,
+  saveHarnessSettings,
+  savePiProvider,
+} from '../lib/api';
+import type { HarnessModel, HarnessSettingsResponse, PiProviderSummary } from '../lib/api';
 import SettingsSelect from './SettingsSelect';
+
+const EMPTY_PROVIDER = {
+  id: '',
+  name: '',
+  baseUrl: '',
+  api: 'openai-completions',
+  apiKey: '',
+  models: '',
+};
+
+const API_LABELS: Record<string, string> = {
+  'openai-completions': 'OpenAI Chat Completions 兼容',
+  'openai-responses': 'OpenAI Responses',
+  'anthropic-messages': 'Anthropic Messages',
+  'google-generative-ai': 'Google Generative AI',
+  'azure-openai-responses': 'Azure OpenAI Responses',
+  'mistral-conversations': 'Mistral Conversations',
+  'bedrock-converse-stream': 'AWS Bedrock Converse',
+  'openai-codex-responses': 'OpenAI Codex Responses',
+  'google-vertex': 'Google Vertex',
+  'pi-messages': 'Pi Messages',
+};
 
 /**
  * Agent kernel settings.
@@ -10,9 +39,8 @@ import SettingsSelect from './SettingsSelect';
  * SDK. This panel therefore configures the pi model and its tool permission
  * boundary, not a runtime picker.
  */
-export default function HarnessSettings({ onChange, onSelect }: {
+export default function HarnessSettings({ onChange }: {
   onChange: (runtime: string) => void;
-  onSelect: (runtime: string) => void;
 }) {
   const [settings, setSettings] = useState<HarnessSettingsResponse | null>(null);
   const [model, setModel] = useState('');
@@ -25,6 +53,14 @@ export default function HarnessSettings({ onChange, onSelect }: {
   const [refresh, setRefresh] = useState(0);
   const [settingsLoading, setSettingsLoading] = useState(true);
   const modelRequest = useRef(0);
+  const [providers, setProviders] = useState<PiProviderSummary[]>([]);
+  const [providerApis, setProviderApis] = useState<string[]>([]);
+  const [providerModelsPath, setProviderModelsPath] = useState('');
+  const [providerForm, setProviderForm] = useState({ ...EMPTY_PROVIDER });
+  const [editingProvider, setEditingProvider] = useState('');
+  const [providerLoading, setProviderLoading] = useState(true);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [providerNote, setProviderNote] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -36,14 +72,29 @@ export default function HarnessSettings({ onChange, onSelect }: {
       setModel(value.models.pi || '');
       setSandbox(value.sandbox || 'workspace-write');
       onChange('pi');
-      onSelect('pi');
     }).catch((error) => {
       if (alive) setNote(`读取失败：${error instanceof Error ? error.message : String(error)}`);
     }).finally(() => {
       if (alive) setSettingsLoading(false);
     });
     return () => { alive = false; modelRequest.current += 1; };
-  }, [onChange, onSelect, refresh]);
+  }, [onChange, refresh]);
+
+  useEffect(() => {
+    let alive = true;
+    setProviderLoading(true);
+    fetchPiProviders().then((value) => {
+      if (!alive) return;
+      setProviders(value.providers);
+      setProviderApis(value.apis);
+      setProviderModelsPath(value.modelsPath);
+    }).catch((error) => {
+      if (alive) setProviderNote(`读取 models.json 失败：${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => {
+      if (alive) setProviderLoading(false);
+    });
+    return () => { alive = false; };
+  }, [refresh]);
 
   const pullModels = async () => {
     const sequence = ++modelRequest.current;
@@ -54,7 +105,7 @@ export default function HarnessSettings({ onChange, onSelect }: {
       if (modelRequest.current !== sequence) return;
       setCatalogs(result.models);
       if (!result.models.length) {
-        setModelNote('pi 还没有可用模型。请先在终端运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。');
+        setModelNote('pi 还没有可用模型。请在设置页添加供应商、在终端运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。');
       }
     } catch (error) {
       if (modelRequest.current === sequence) {
@@ -77,6 +128,78 @@ export default function HarnessSettings({ onChange, onSelect }: {
       setNote(`保存失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const resetProviderForm = () => {
+    setEditingProvider('');
+    setProviderForm({ ...EMPTY_PROVIDER });
+    setProviderNote('');
+  };
+
+  const beginEditProvider = (provider: PiProviderSummary) => {
+    setEditingProvider(provider.id);
+    setProviderForm({
+      id: provider.id,
+      name: provider.name,
+      baseUrl: provider.baseUrl,
+      api: provider.api,
+      apiKey: '',
+      models: provider.models.join('\n'),
+    });
+    setProviderNote('');
+  };
+
+  const saveProvider = async () => {
+    const models = providerForm.models.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+    if (!providerForm.baseUrl.trim() || !models.length) {
+      setProviderNote('请填写 Base URL 和至少一个模型 ID。');
+      return;
+    }
+    setProviderBusy(true);
+    setProviderNote('');
+    try {
+      const result = await savePiProvider({
+        id: providerForm.id,
+        name: providerForm.name,
+        baseUrl: providerForm.baseUrl,
+        api: providerForm.api,
+        apiKey: providerForm.apiKey,
+        models,
+      });
+      setProviders(result.providers);
+      setProviderApis(result.apis);
+      setProviderModelsPath(result.modelsPath);
+      setCatalogs(result.models);
+      const firstModel = result.provider?.models[0];
+      if (!model && firstModel && result.provider) setModel(`${result.provider.id}/${firstModel}`);
+      setEditingProvider('');
+      setProviderForm({ ...EMPTY_PROVIDER });
+      setProviderNote('已写入 pi 的 models.json，下个对话回合即可使用；再点「保存配置」可把它设为当前模型。');
+    } catch (error) {
+      setProviderNote(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
+  const removeProvider = async (provider: PiProviderSummary) => {
+    if (!window.confirm(`从 pi 的 models.json 删除供应商「${provider.name}」？`)) return;
+    setProviderBusy(true);
+    setProviderNote('');
+    try {
+      const result = await deletePiProvider(provider.id);
+      setProviders(result.providers);
+      setProviderApis(result.apis);
+      setProviderModelsPath(result.modelsPath);
+      setCatalogs(result.models);
+      if (model.startsWith(`${provider.id}/`)) setModel('');
+      if (editingProvider === provider.id) resetProviderForm();
+      setProviderNote(`已从 models.json 删除供应商「${provider.id}」。`);
+    } catch (error) {
+      setProviderNote(`删除失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setProviderBusy(false);
     }
   };
 
@@ -129,8 +252,117 @@ export default function HarnessSettings({ onChange, onSelect }: {
             onChange={(event) => setModel(event.target.value)}
             placeholder="provider/model；留空使用 pi 默认模型" />
           <p className="desc">模型来自 pi 的登录状态与 models.json。Easel 会把 .env 的
-            <code> EASEL_DIRECT_API_* </code>映射为 pi 的 <code>easel-direct</code> 供应商。</p>
+            <code> EASEL_DIRECT_API_* </code>映射为 pi 的 <code>easel-direct</code> 供应商；
+            其它 OpenAI / Anthropic / Google 兼容端点可在下方直接写入 pi 的 <code>models.json</code>。</p>
           {modelNote && <p className="desc" role="status">{modelNote}</p>}
+        </div>
+      </div>
+
+      <div className="settings-field">
+        <span className="settings-field-label">pi 供应商</span>
+        <div className="settings-field-body">
+          <p className="desc">直接维护 pi 原生的 <code>models.json</code>。保存后下个对话回合就能选用，
+            不需要重启 Easel；API Key 只以脱敏值回显。</p>
+          <div className="pi-provider-list">
+            {providerLoading && <p className="desc">读取 models.json…</p>}
+            {!providerLoading && !providers.length && (
+              <p className="desc">models.json 里还没有自定义供应商，使用下方表单添加。</p>
+            )}
+            {providers.map((provider) => (
+              <div className={`pi-provider-item${editingProvider === provider.id ? ' editing' : ''}`} key={provider.id}>
+                <div className="pi-provider-main">
+                  <div className="pi-provider-title">
+                    <strong>{provider.name}</strong>
+                    <code>{provider.id}</code>
+                  </div>
+                  <div className="desc">{provider.api} · {provider.baseUrl || '（未设置 Base URL）'}</div>
+                  <div className="desc">
+                    {provider.models.join('、') || '未配置模型'}
+                    {provider.keyMasked ? ` · Key ${provider.keyMasked}` : ''}
+                  </div>
+                </div>
+                <div className="pi-provider-actions">
+                  {provider.managed ? (
+                    <span className="desc">由 .env 管理</span>
+                  ) : (
+                    <>
+                      <button type="button" className="btn btn-sm" disabled={providerBusy || settings?.locked}
+                        onClick={() => beginEditProvider(provider)}>编辑</button>
+                      <button type="button" className="btn btn-sm" disabled={providerBusy || settings?.locked}
+                        onClick={() => void removeProvider(provider)}>删除</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="pi-provider-form">
+            <div className="pi-provider-form-head">
+              <strong>{editingProvider ? `编辑 ${editingProvider}` : '添加供应商'}</strong>
+              <span className="desc">{providerModelsPath || 'pi models.json'}</span>
+            </div>
+            <div className="pi-form-row">
+              <label htmlFor="pi-provider-id">供应商 ID</label>
+              <input id="pi-provider-id" className="mock" value={providerForm.id}
+                disabled={providerBusy || settings?.locked || Boolean(editingProvider)} maxLength={64}
+                placeholder="例如 my-openai"
+                onChange={(event) => setProviderForm((form) => ({ ...form, id: event.target.value }))} />
+            </div>
+            <div className="pi-form-row">
+              <label htmlFor="pi-provider-name">显示名称</label>
+              <input id="pi-provider-name" className="mock" value={providerForm.name}
+                disabled={providerBusy || settings?.locked} maxLength={80} placeholder="可留空，默认使用供应商 ID"
+                onChange={(event) => setProviderForm((form) => ({ ...form, name: event.target.value }))} />
+            </div>
+            <div className="pi-form-row">
+              <label htmlFor="pi-provider-base">Base URL</label>
+              <input id="pi-provider-base" className="mock" value={providerForm.baseUrl}
+                disabled={providerBusy || settings?.locked} placeholder="https://api.example.com/v1"
+                onChange={(event) => setProviderForm((form) => ({ ...form, baseUrl: event.target.value }))} />
+            </div>
+            <div className="pi-form-row">
+              <label>API 类型</label>
+              <SettingsSelect label="pi API 类型" value={providerForm.api} disabled={providerBusy || settings?.locked}
+                options={(providerApis.length ? providerApis : [providerForm.api]).map((value) => ({
+                  value,
+                  label: API_LABELS[value] || value,
+                }))}
+                onChange={(api) => setProviderForm((form) => ({ ...form, api }))} />
+            </div>
+            <div className="pi-form-row">
+              <label htmlFor="pi-provider-key">API Key</label>
+              <input id="pi-provider-key" className="mock" type="password" value={providerForm.apiKey}
+                disabled={providerBusy || settings?.locked}
+                placeholder={editingProvider ? '留空表示保留已保存的 Key' : '可留空，改用供应商环境变量'}
+                onChange={(event) => setProviderForm((form) => ({ ...form, apiKey: event.target.value }))} />
+            </div>
+            <div className="pi-form-row">
+              <label htmlFor="pi-provider-models">模型 ID</label>
+              <textarea id="pi-provider-models" className="mock pi-provider-models" rows={3}
+                value={providerForm.models} disabled={providerBusy || settings?.locked}
+                placeholder={'每行一个模型 ID，例如\ngpt-4.1\no3'}
+                onChange={(event) => setProviderForm((form) => ({ ...form, models: event.target.value }))} />
+            </div>
+            <div className="pi-form-actions">
+              <button type="button" className="btn btn-sm" disabled={providerBusy || settings?.locked}
+                onClick={() => void saveProvider()}>
+                {providerBusy ? '写入中…' : editingProvider ? '更新供应商' : '添加供应商'}
+              </button>
+              {(editingProvider || providerForm.id || providerForm.baseUrl || providerForm.models) && (
+                <button type="button" className="btn btn-sm" disabled={providerBusy} onClick={resetProviderForm}>清空</button>
+              )}
+            </div>
+            <p className="desc">API Key 会按 pi 的原生格式明文写入 <code>models.json</code>；也可以只填
+              <code> $ENV_NAME </code> 让 pi 从环境变量读取。本地无鉴权端点可填任意占位 Key（如
+              <code> ollama </code>），否则 pi 可能不会把模型列为可用。若同名供应商已在 pi 中登录，pi 会优先使用
+              <code> auth.json </code> 里的凭据。</p>
+            {providerNote && (
+              <p className={`desc pi-provider-note${providerNote.includes('失败') ? ' err' : ''}`} role="status">
+                {providerNote}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

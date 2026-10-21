@@ -47,7 +47,15 @@ import {
 } from "./content.js";
 import { readJsonStrict } from "./config.js";
 import { answerQuestion, installHostBridge, questionStatus } from "./pi/host.js";
-import { createModelRuntime, listModels } from "./pi/models.js";
+import {
+  PI_PROVIDER_APIS,
+  createModelRuntime,
+  deletePiProvider,
+  listModels,
+  modelRuntimePathHints,
+  piProviders,
+  savePiProvider,
+} from "./pi/models.js";
 import { runChatTurn, stopTurn, type AttachmentRef } from "./pi/chat.js";
 import { JobWriter, jobExists, readJob, readLastTurn, reconstructTurn, saveLastTurn } from "./jobs.js";
 import { channelSelftest, modelChannels, saveModelRows } from "./model-channels.js";
@@ -188,7 +196,7 @@ function settingsPayload() {
         label: "Pi（TypeScript SDK）",
         protocol: "in-process SDK",
         installed: true,
-        install_hint: "pi 已内置于 Easel；模型登录使用 `pi` 或 .env 的 EASEL_DIRECT_API_*。",
+        install_hint: "pi 已内置于 Easel；模型登录使用 `pi`，或在设置页维护 pi 的 models.json / .env 的 EASEL_DIRECT_API_*。",
       },
     ],
   };
@@ -229,7 +237,7 @@ app.get("/api/settings/bootstrap", wrap(async (_req, res) => {
     routeOk: configured,
     routeDetail: configured
       ? "pi 模型已就绪"
-      : "pi 还没有可用模型。运行 `pi` 完成 /login，或在 .env 配置 EASEL_DIRECT_API_*。",
+      : "pi 还没有可用模型。运行 `pi` 完成 /login，或在设置页添加 pi 供应商 / 配置 .env 的 EASEL_DIRECT_API_*。",
     installWarnings: warnings,
     runtime: "pi",
   });
@@ -254,6 +262,59 @@ app.post("/api/settings/harness/models/:runtime", wrap(async (req, res) => {
   if (param(req, "runtime") !== "pi") fail("pi 是唯一 Agent 底座", 409);
   const runtime = await createModelRuntime();
   res.json({ runtime: "pi", models: await listModels(runtime) });
+}));
+
+function piProviderPayload() {
+  return {
+    providers: piProviders(),
+    apis: PI_PROVIDER_APIS,
+    ...modelRuntimePathHints(),
+  };
+}
+
+app.get("/api/settings/pi/providers", wrap(async (_req, res) => {
+  await createModelRuntime();
+  res.json(piProviderPayload());
+}));
+
+app.post("/api/settings/pi/providers", wrap(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  let provider;
+  try {
+    provider = savePiProvider({
+      id: String(body.id ?? ""),
+      name: body.name === undefined ? undefined : String(body.name),
+      baseUrl: String(body.baseUrl ?? ""),
+      api: String(body.api ?? ""),
+      apiKey: body.apiKey === undefined ? undefined : String(body.apiKey),
+      models: Array.isArray(body.models) ? body.models.map((item) => String(item)) : [],
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "保存 pi 供应商失败");
+  }
+  const runtime = await createModelRuntime();
+  res.json({
+    ok: true,
+    provider,
+    ...piProviderPayload(),
+    models: await listModels(runtime),
+  });
+}));
+
+app.delete("/api/settings/pi/providers/:id", wrap(async (req, res) => {
+  let removed = false;
+  try {
+    removed = deletePiProvider(param(req, "id"));
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "删除 pi 供应商失败");
+  }
+  if (!removed) fail("供应商不存在", 404);
+  const runtime = await createModelRuntime();
+  res.json({
+    ok: true,
+    ...piProviderPayload(),
+    models: await listModels(runtime),
+  });
 }));
 
 app.get("/api/settings/models", wrap(async (_req, res) => {

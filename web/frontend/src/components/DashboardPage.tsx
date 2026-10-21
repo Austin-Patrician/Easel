@@ -150,7 +150,7 @@ export default function DashboardPage({ persona, runtimeStatus, agentRuntime, on
         <p className="page-subtitle">
           {agentRuntime === 'pi' ? (runtimeStatus === 'connected'
             ? 'pi SDK 已就绪；模型登录及可用性请发送消息验证。'
-            : 'pi 尚未就绪，请检查模型登录或 .env 中的 EASEL_DIRECT_API_*。')
+            : 'pi 尚未就绪，请在设置页添加供应商、运行 pi /login，或配置 .env 中的 EASEL_DIRECT_API_*。')
             : runtimeStatus === 'connected' ? '一切就绪。' : '⚠ 服务未连接。'}
           {persona ? ` 当前画像「${persona}」。` : ' 通用模式——指定画像效果更好。'}
           从热点到发布，一站式搞定今天的内容。

@@ -17,7 +17,7 @@ This page lists known Easel issues and workarounds. If your problem is not cover
 
 ## Models and chat
 
-- **No model available**: run `pi` and `/login`, or set `EASEL_DIRECT_API_KEY`, `EASEL_DIRECT_API_BASE_URL`, and `EASEL_DIRECT_API_MODEL` in `.env`.
+- **No model available**: add a provider under Settings → Model configuration → Chat → pi providers, or run `pi` and `/login`, or set `EASEL_DIRECT_API_KEY`, `EASEL_DIRECT_API_BASE_URL`, and `EASEL_DIRECT_API_MODEL` in `.env`.
 - **Third-party OpenAI-compatible endpoint times out**: make sure the base URL includes `/v1`, the model supports streaming and tool calls, and local endpoints bypass external HTTP proxies.
 - **Continue after a disconnect**: the web app replays events from `outputs/_pi/jobs/<turnId>.jsonl`, so a refresh does not lose completed content.
 - **A tool was denied**: check the pi sandbox permission in Settings. `read-only` blocks writes and command execution; switch to `workspace-write` to run project scripts.

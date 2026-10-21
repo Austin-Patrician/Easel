@@ -2,19 +2,21 @@
 set -euo pipefail
 
 # Easel 安装脚本：Node.js + pi SDK + 前端 + Python 媒体工具。
-# 用法：bash setup.sh [--check] [--skip-python] [--skip-install] [--start]
+# 用法：bash setup.sh [--check] [--skip-python] [--skip-browser] [--skip-install] [--start]
 
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_ROOT"
 
 CHECK=0
 SKIP_PYTHON=0
+SKIP_BROWSER=0
 SKIP_INSTALL=0
 START=0
 for argument in "$@"; do
   case "$argument" in
     --check) CHECK=1 ;;
     --skip-python) SKIP_PYTHON=1 ;;
+    --skip-browser) SKIP_BROWSER=1 ;;
     --skip-install) SKIP_INSTALL=1 ;;
     --start) START=1 ;;
     -h|--help)
@@ -23,6 +25,7 @@ for argument in "$@"; do
 
   --check         只检查环境，不安装、不构建
   --skip-python   不创建 Python 虚拟环境，也不安装媒体依赖
+  --skip-browser  跳过 Playwright Chromium 安装（登录 / 发布需要）
   --skip-install  跳过 npm / pip 安装，只做环境检查和构建
   --start         构建完成后启动 Web 服务
 EOF
@@ -56,7 +59,16 @@ if [ "$CHECK" = 1 ]; then
   [ -f .env ] && ok ".env 已存在" || warn ".env 不存在；运行不带 --check 的脚本会自动从 .env.example 创建"
   [ -d node_modules ] && ok "Node 依赖已安装" || warn "Node 依赖未安装"
   [ -d web/frontend/node_modules ] && ok "前端依赖已安装" || warn "前端依赖未安装"
-  [ -x .venv/bin/python ] && ok "Python 虚拟环境已存在" || warn "Python 虚拟环境未创建"
+  if [ -x .venv/bin/python ]; then
+    ok "Python 虚拟环境已存在"
+    if .venv/bin/python -c 'from pathlib import Path; from playwright.sync_api import sync_playwright; p = sync_playwright().start(); ready = Path(p.chromium.executable_path).exists(); p.stop(); raise SystemExit(0 if ready else 1)' >/dev/null 2>&1; then
+      ok "Playwright Chromium 已安装"
+    else
+      warn "Playwright Chromium 未安装；登录 / 发布前请运行 .venv/bin/python -m playwright install chromium"
+    fi
+  else
+    warn "Python 虚拟环境未创建"
+  fi
   exit 0
 fi
 
@@ -76,6 +88,17 @@ if [ "$SKIP_INSTALL" = 0 ]; then
     .venv/bin/python -m pip install --upgrade pip --quiet
     .venv/bin/python -m pip install -e . --quiet
     ok "Python 依赖安装完成"
+
+    if [ "$SKIP_BROWSER" = 0 ]; then
+      info "安装 Playwright Chromium（扫码登录 / 发布需要）…"
+      if .venv/bin/python -m playwright install chromium; then
+        ok "Playwright Chromium 安装完成"
+      else
+        warn "Playwright Chromium 安装失败；可在 Web 设置 → 环境安装重试，或运行 .venv/bin/python -m playwright install chromium"
+      fi
+    else
+      warn "已跳过 Playwright Chromium；登录 / 发布前需手动安装"
+    fi
   else
     warn "已跳过 Python 依赖；媒体和自动发布相关技能可能不可用"
   fi

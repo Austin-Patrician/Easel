@@ -1,8 +1,9 @@
 ﻿# Easel 安装脚本：Node.js + pi SDK + 前端 + Python 媒体工具。
-# 用法：powershell -ExecutionPolicy Bypass -File setup.ps1 [-Check] [-SkipPython] [-SkipInstall] [-Start]
+# 用法：powershell -ExecutionPolicy Bypass -File setup.ps1 [-Check] [-SkipPython] [-SkipBrowser] [-SkipInstall] [-Start]
 param(
     [switch]$Check,
     [switch]$SkipPython,
+    [switch]$SkipBrowser,
     [switch]$SkipInstall,
     [switch]$Start
 )
@@ -52,7 +53,18 @@ if ($Check) {
     if (Test-Path (Join-Path $Root '.env')) { Write-Ok '.env 已存在' } else { Write-Warn '.env 不存在' }
     if (Test-Path (Join-Path $Root 'node_modules')) { Write-Ok 'Node 依赖已安装' } else { Write-Warn 'Node 依赖未安装' }
     if (Test-Path (Join-Path $Root 'web\frontend\node_modules')) { Write-Ok '前端依赖已安装' } else { Write-Warn '前端依赖未安装' }
-    if (Test-Path (Join-Path $Root '.venv\Scripts\python.exe')) { Write-Ok 'Python 虚拟环境已存在' } else { Write-Warn 'Python 虚拟环境未创建' }
+    $VenvPython = Join-Path $Root '.venv\Scripts\python.exe'
+    if (Test-Path $VenvPython) {
+        Write-Ok 'Python 虚拟环境已存在'
+        & $VenvPython -c 'from pathlib import Path; from playwright.sync_api import sync_playwright; p = sync_playwright().start(); ready = Path(p.chromium.executable_path).exists(); p.stop(); raise SystemExit(0 if ready else 1)' 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok 'Playwright Chromium 已安装'
+        } else {
+            Write-Warn 'Playwright Chromium 未安装；登录 / 发布前请运行 .venv\Scripts\python.exe -m playwright install chromium'
+        }
+    } else {
+        Write-Warn 'Python 虚拟环境未创建'
+    }
     exit 0
 }
 
@@ -69,6 +81,18 @@ if (-not $SkipInstall) {
         Invoke-Step '升级 pip' { & $VenvPython -m pip install --upgrade pip --quiet }
         Invoke-Step '安装 Python 媒体 / 发布依赖' { & $VenvPython -m pip install -e . --quiet }
         Write-Ok 'Python 依赖安装完成'
+
+        if (-not $SkipBrowser) {
+            Write-Info '安装 Playwright Chromium（扫码登录 / 发布需要）…'
+            & $VenvPython -m playwright install chromium
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn 'Playwright Chromium 安装失败；可在 Web 设置 → 环境安装重试，或运行 .venv\Scripts\python.exe -m playwright install chromium'
+            } else {
+                Write-Ok 'Playwright Chromium 安装完成'
+            }
+        } else {
+            Write-Warn '已跳过 Playwright Chromium；登录 / 发布前需手动安装'
+        }
     } else {
         Write-Warn '已跳过 Python 依赖；媒体和自动发布相关技能可能不可用'
     }

@@ -65,7 +65,7 @@ TypeScript 后端 (Express)
 - **Node.js >= 22.19**（pi SDK 要求）
 - **npm**
 - **Python >= 3.10**（媒体处理、浏览器登录与自动发布需要）
-- FFmpeg、Playwright Chromium 等由对应技能在首次使用时提示安装
+- FFmpeg 由对应技能按需安装；`setup.sh` / `setup.ps1` 会安装登录与发布所需的 Playwright Chromium
 
 ### 安装
 
@@ -89,15 +89,16 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 1. 检查 Node.js 版本；
 2. 安装后端与前端 npm 依赖；
-3. 创建 `.venv` 并安装 Python 媒体依赖；
+3. 创建 `.venv`、安装 Python 媒体依赖，并安装与 Playwright 版本匹配的 Chromium；
 4. 如果没有 `.env`，从 `.env.example` 创建；
 5. 构建 TypeScript 后端和 React 前端。
 
 可选参数：
 
 ```bash
-bash setup.sh --check          # 只检查环境
+bash setup.sh --check          # 只检查环境（含 Playwright Chromium）
 bash setup.sh --skip-python    # 跳过 Python 依赖
+bash setup.sh --skip-browser   # 跳过 Playwright Chromium 安装
 bash setup.sh --skip-install   # 跳过依赖安装，直接构建
 bash setup.sh --start          # 构建后启动 Web 服务
 ```

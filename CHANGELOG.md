@@ -27,6 +27,10 @@ All notable changes to Easel are documented in this file.
 - README, prompt-stack, skill spec, known issues, and contribution docs now describe the pi-only architecture.
 - Python dependencies are limited to media, browser, and publishing tools.
 
+### Fixed
+
+- `setup.sh` / `setup.ps1` now install the Playwright Chromium build matching the installed Playwright version, so a Playwright upgrade no longer breaks QR login with a missing `chromium_headless_shell` executable. Use `--skip-browser` / `-SkipBrowser` to opt out.
+
 ### Removed
 
 - `easel/harnesses/`, `easel/commands/`, `easel/direct_api.py`, gateway/OpenClaw helpers, local agent discovery, the OpenClaw workspace sync scripts, and their obsolete tests.

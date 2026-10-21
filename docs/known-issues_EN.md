@@ -9,7 +9,7 @@ This page lists known Easel issues and workarounds. If your problem is not cover
 - **Waiting forever after scanning a QR code**: scanning is not login completion; confirm in the mobile app. Easel marks success only when the platform API returns the current account or the page clearly shows a logged-in view.
 - **Avatar or name belongs to another account**: account cards read only the current account region or official account API, never the admin avatar or unrelated users in the feed.
 - **Identity is blank after a successful scan**: the login browser must save and release its profile directory before verification. Network errors and blank pages keep the last verified identity instead of reporting logout.
-- **QR refresh or network interruption**: clicking login again terminates the old login process first, then requests a new QR code. If retries keep failing, check the server's network access to the platform domains.
+- **Login exits with code 1 and the log says `chromium_headless_shell` is missing**: Playwright was upgraded without installing the matching browser build. Run `.venv/bin/python -m playwright install chromium` (`.venv\Scripts\python.exe -m playwright install chromium` on Windows), or rerun the setup script. `bash setup.sh --check` reports whether the browser is installed.
 - **Xiaohongshu reports an IP risk**: the platform may apply risk controls to data-center networks or automation. Verify the site is reachable from a trusted network; on a desktop, run `xhs_publish.py login --headed --no-proxy` to see the platform's original message. Never share cookies or browser profiles.
 - **WeChat Official Account is not logged in**: publishing uses a separate QR session. Log in on the Accounts page before automated publishing.
 

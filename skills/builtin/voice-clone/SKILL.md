@@ -28,6 +28,7 @@ python skills/shared/scripts/voice_clone.py check --provider minimax --env-file 
 | `fish-audio` | Fish Audio | `FISH_API_KEY`（可选 `FISH_BASE_URL`） |
 | `openai-compatible` | OpenAI 兼容 /audio/speech | `VOICE_API_KEY`、`VOICE_BASE_URL`（预置 voice，非零样本克隆） |
 | `gemini` | Google Gemini TTS | `GEMINI_API_KEY`（可选 `GEMINI_TTS_MODEL`/`GEMINI_VOICE`/`GEMINI_BASE_URL`） |
+| `xiaomi-mimo` | 小米 MiMo TTS（预置 / 音色设计 / 音色复刻） | `MIMO_API_KEY`（可选 `MIMO_TTS_MODEL`/`MIMO_TTS_VOICE`/`MIMO_BASE_URL`） |
 
 > ⚠️ 各 provider 依公开 API 文档实现，端点/模型名可用 env 覆盖以适配实际参数。
 
@@ -57,7 +58,8 @@ python skills/shared/scripts/voice_clone.py enroll --provider minimax \
 python skills/shared/scripts/voice_clone.py enroll --provider dashscope \
   --sample-url https://.../me.wav --name myv
 ```
-（fish-audio 用已有 model_id 或内联参考音频，openai-compatible 用预置 voice 名，无需 enroll。）
+（fish-audio 用已有 model_id 或内联参考音频，openai-compatible 用预置 voice 名，无需 enroll。
+小米 MiMo 的 `mimo-v2.5-tts-voiceclone` 直接用样本，不需要 enroll。）
 
 ### 2. 合成（clone）
 ```bash
@@ -66,6 +68,18 @@ python skills/shared/scripts/voice_clone.py clone --provider minimax \
   -o outputs/主题名/vo.mp3
 ```
 fish-audio 也可直接给参考音频：`--sample ref.mp3 --sample-text "参考音频的文字"`。
+
+小米 MiMo 预置音色（无需样本）：
+```bash
+python skills/shared/scripts/voice_clone.py clone --provider xiaomi-mimo \
+  --voice-id 冰糖 --text "大家好，欢迎来到我的频道" -o outputs/主题名/vo.mp3
+```
+小米 MiMo 音色复刻（mp3/wav 样本，自动转 data URI）：
+```bash
+python skills/shared/scripts/voice_clone.py clone --provider xiaomi-mimo \
+  --model mimo-v2.5-tts-voiceclone --sample me.mp3 \
+  --text "大家好，欢迎来到我的频道" -o outputs/主题名/vo.mp3
+```
 
 ## 合规红线（必须遵守）
 

@@ -210,7 +210,8 @@ def _closed_provider() -> str | None:
 
 def _closed_voice_id(voice: str | None) -> str | None:
     """闭源音色 id：显式 voice 像闭源音色(含 : 或 /)就用它；否则 env VOICE_NARRATOR_VOICE_ID；
-    再否则 openai-compatible 用 CosyVoice2 沉稳男声 alex 作旁白默认；其它 provider 交给 voice_clone 默认。"""
+    再否则 openai-compatible 用 CosyVoice2 沉稳男声 alex、xiaomi-mimo 用 mimo_default 作旁白默认；
+    其它 provider 交给 voice_clone 默认。"""
     if voice and (":" in voice or "/" in voice):
         return voice
     vid = (os.environ.get("VOICE_NARRATOR_VOICE_ID") or "").strip()
@@ -219,6 +220,8 @@ def _closed_voice_id(voice: str | None) -> str | None:
     if _closed_provider() == "openai-compatible":
         model = (os.environ.get("VOICE_MODEL") or "").strip() or "FunAudioLLM/CosyVoice2-0.5B"
         return f"{model}:alex"
+    if _closed_provider() == "xiaomi-mimo":
+        return (os.environ.get("MIMO_TTS_VOICE") or "").strip() or "mimo_default"
     return None
 
 

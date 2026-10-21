@@ -53,6 +53,7 @@ DEFAULT_NARRATOR_VOICE = "zh-CN-YunyangNeural"  # 旁白 edge 兜底音色（仅
 PRESET_NARRATOR_VOICE = {
     "openai-compatible": "FunAudioLLM/CosyVoice2-0.5B:alex",  # SiliconFlow CosyVoice2 沉稳男声
     "gemini": "Charon",                                       # gemini 男声
+    "xiaomi-mimo": "mimo_default",                            # 小米 MiMo 默认预置音色
 }
 
 # 情绪 → 韵律增量（rate% / pitchHz / volume%），叠加在角色基础音色之上（子串匹配）。
@@ -161,7 +162,7 @@ def _closed_source_configured() -> bool:
 def cast_init(cast_file: Path, title: str = "", narrator_provider: str | None = None) -> dict:
     """建 cast.json 模板。**旁白/普通配音默认也走闭源云 provider**（不用 AI 味 edge）：
     给了 narrator_provider（通常来自环境变量 VOICE_PROVIDER）且该 provider 有预置音色
-    （openai-compatible/gemini）→ 旁白直接 clone 闭源预置音色；否则（无 key 或 provider 需 enroll）
+    （openai-compatible/gemini/xiaomi-mimo）→ 旁白直接 clone 闭源预置音色；否则（无 key 或 provider 需 enroll）
     退回 edge 并在 note 里标注「务必升级闭源」。"""
     if cast_file.exists():
         return {"path": str(cast_file), "created": False}
@@ -183,7 +184,7 @@ def cast_init(cast_file: Path, title: str = "", narrator_provider: str | None = 
         "_guide": "按 skills/shared/references/voice-casting.md 为每个说话人定音色：**先看该角色的定妆参考图**"
                   "（萝莉→萝莉音、大叔→低沉音，绝不错位），在 archetype 写形象原型、ref 写定妆图 C 编号。"
                   "【闭源强制优先】所有角色含旁白/普通配音一律 engine=clone + 闭源云 provider"
-                  "（openai-compatible CosyVoice2/minimax/dashscope/gemini，有情感、像真人；provider 不填取 VOICE_PROVIDER）；"
+                  "（openai-compatible CosyVoice2/minimax/dashscope/gemini/xiaomi-mimo，有情感、像真人；provider 不填取 VOICE_PROVIDER）；"
                   "engine=edge 只在完全没配 key 时兜底（AI 味、平），配了 key 后 cast check 会拦。",
         "cast": [narrator],
     }
@@ -203,7 +204,7 @@ def cast_advisories(cast: dict) -> list[str]:
             continue
         if c.get("engine", "edge") == "edge" and c.get("role") not in ("narrator", "extra"):
             tips.append(f"{nm} 用 edge-tts（免费但无情感、机器味）——改闭源云 provider "
-                        f"（--engine clone --provider <minimax|dashscope|openai-compatible|gemini>），更像真人")
+                        f"（--engine clone --provider <minimax|dashscope|openai-compatible|gemini|xiaomi-mimo>），更像真人")
         # 形象原型缺失：提醒「先看定妆图再定音色」（萝莉→萝莉音、大叔→大叔音）
         if c.get("role") not in ("narrator", "extra") and not (c.get("archetype") or "").strip():
             tips.append(f"{nm} 没写 archetype（形象原型）——请先看该角色定妆图判断（萝莉/御姐/大叔/冷峻男主…）"
@@ -816,6 +817,11 @@ def _selftest() -> int:
         nar = cast_load(cf2)["cast"][0]
         chk("cast_init 旁白默认闭源(clone+预置voice_id)",
             nar["engine"] == "clone" and nar.get("voice_id") == PRESET_NARRATOR_VOICE["openai-compatible"])
+        cf2b = Path(td) / "cast2b.json"
+        cast_init(cf2b, "测试2b", narrator_provider="xiaomi-mimo")
+        nar2b = cast_load(cf2b)["cast"][0]
+        chk("cast_init 小米 MiMo 旁白预置音色",
+            nar2b["engine"] == "clone" and nar2b.get("voice_id") == "mimo_default")
         # 无 provider → 旁白退 edge 但 note 标注务必升级
         cf3 = Path(td) / "cast3.json"
         cast_init(cf3, "测试3")

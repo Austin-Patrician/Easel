@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""voice_clone.py — 声音克隆配音的可插拔客户端（纯标准库，无第三方依赖）。
+"""voice_clone.py — 声音克隆配音的可插拔客户端（纯标准库；有 certifi 时优先用它的 CA 证书）。
 
 "用我的声音配音"类 SKILL（voice-clone）共用此脚本。上传一段本人语音样本克隆音色，
 再用该音色把任意文案合成为语音。本地无 GPU 也能用——走云端 provider，用户自备 API key。
@@ -10,6 +10,7 @@
   - fish-audio         Fish Audio（参考音频 TTS / 已有 model_id）
   - openai-compatible  OpenAI 兼容 /audio/speech（含 SiliconFlow 硅基流动托管 CosyVoice2）
   - gemini             Google Gemini TTS（免费层可用；情感走自然语言前缀）
+  - xiaomi-mimo        小米 MiMo TTS（OpenAI 兼容 /chat/completions + audio 字段；预置音色）
 
 逐行情感：clone 支持 --emotion（中文情绪词）→ 各 provider 情感通道（minimax emotion 枚举 /
 dashscope·gemini·openai 自然语言指令；SiliconFlow CosyVoice2 用内联 <|endofprompt|>）。
@@ -23,6 +24,7 @@ dashscope·gemini·openai 自然语言指令；SiliconFlow CosyVoice2 用内联 
   【fish-audio】 FISH_API_KEY，可选 FISH_BASE_URL
   【openai-compatible】 VOICE_API_KEY、VOICE_BASE_URL，可选 VOICE_MODEL、VOICE_INSTRUCT_MODE(field|inline)
   【gemini】 GEMINI_API_KEY，可选 GEMINI_TTS_MODEL / GEMINI_VOICE / GEMINI_BASE_URL
+  【xiaomi-mimo】 MIMO_API_KEY，可选 MIMO_TTS_MODEL / MIMO_TTS_VOICE / MIMO_BASE_URL
 
   ── SiliconFlow 硅基流动（云端 CosyVoice2，无需 GPU，中文情感、便宜/新用户有赠额）──
      VOICE_PROVIDER=openai-compatible
@@ -34,6 +36,11 @@ dashscope·gemini·openai 自然语言指令；SiliconFlow CosyVoice2 用内联 
   ── Gemini（真免费层，Google AI Studio key）──
      VOICE_PROVIDER=gemini
      GEMINI_API_KEY=<你的免费 key>       # 可选 GEMINI_VOICE=Kore（30 音色）
+  ── 小米 MiMo TTS（OpenAI 兼容 chat/completions，音频在响应里 Base64 返回）──
+     VOICE_PROVIDER=xiaomi-mimo
+     MIMO_API_KEY=<你的 key>
+     MIMO_TTS_MODEL=mimo-v2.5-tts        # 预置音色；另支持 voicedesign / voiceclone
+     MIMO_TTS_VOICE=冰糖                  # 可选：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
 
 子命令：
     check     离线校验当前 provider 所需 env（不发请求）
@@ -53,6 +60,7 @@ import argparse
 import http.client
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -187,6 +195,21 @@ def instruct_text(emotion_cn: str | None) -> str:
 
 
 # ── HTTP ────────────────────────────────────────────────────
+def _urlopen(req: urllib.request.Request, timeout: int):
+    """Open a URL with a usable CA bundle.
+
+    python.org macOS builds ship without a default ``cert.pem``; certifi is a
+    transitive dependency of most Easel packages, so prefer its bundle when
+    available. With no certifi, keep the standard-library default.
+    """
+    try:
+        import certifi
+        context = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        context = ssl.create_default_context()
+    return urllib.request.urlopen(req, timeout=timeout, context=context)
+
+
 def http_json(url: str, headers: dict[str, str], payload: dict | None,
               method: str = "POST", timeout: int = 120) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -196,7 +219,7 @@ def http_json(url: str, headers: dict[str, str], payload: dict | None,
     h.update(headers)
     req = urllib.request.Request(url, data=data, headers=h, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         fail(f"接口 HTTP {exc.code}：{exc.read().decode('utf-8', 'replace')[:500]}")
@@ -228,7 +251,7 @@ def http_multipart(url: str, headers: dict[str, str], fields: dict[str, str],
     h.update(headers)
     req = urllib.request.Request(url, data=bytes(body), headers=h, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         fail(f"上传 HTTP {exc.code}：{exc.read().decode('utf-8', 'replace')[:500]}")
@@ -241,7 +264,7 @@ def download(url: str, out: Path, timeout: int = 180) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             out.write_bytes(resp.read())
     except (urllib.error.URLError, TimeoutError) as exc:
         fail(f"下载失败：{exc}")
@@ -378,7 +401,7 @@ def clone_fish(a, out: Path) -> Path:
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                  "User-Agent": UA}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with _urlopen(req, timeout=180) as resp:
             return _save_bytes(resp.read(), out)  # fish 直接返回音频字节
     except urllib.error.HTTPError as exc:
         fail(f"fish-audio HTTP {exc.code}：{exc.read().decode('utf-8', 'replace')[:300]}")
@@ -412,7 +435,7 @@ def clone_openai(a, out: Path) -> Path:
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                  "User-Agent": UA}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with _urlopen(req, timeout=180) as resp:
             return _save_bytes(resp.read(), out)
     except urllib.error.HTTPError as exc:
         fail(f"openai 兼容 HTTP {exc.code}：{exc.read().decode('utf-8', 'replace')[:300]}")
@@ -475,6 +498,87 @@ def clone_gemini(a, out: Path) -> Path:
     return _save_bytes(wav, alt)
 
 
+def _chat_audio_data(resp: dict[str, Any]) -> str:
+    """从 OpenAI 兼容 chat/completions 响应里取音频 Base64（MiMo TTS）。"""
+    choices = resp.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    audio = message.get("audio") if isinstance(message, dict) else None
+    data = audio.get("data") if isinstance(audio, dict) else None
+    if not isinstance(data, str) or not data.strip():
+        return ""
+    value = data.strip()
+    return value.split(",", 1)[-1] if value.startswith("data:") else value
+
+
+def clone_xiaomi(a, out: Path) -> Path:
+    """小米 MiMo TTS。
+
+    走 OpenAI 兼容的 POST /chat/completions：待朗读文本放在 assistant 消息里，
+    风格指令放在可选 user 消息里，音频 Base64 在 choices[0].message.audio.data。
+    预置音色模型是 mimo-v2.5-tts；同时兼容 voicedesign / voiceclone 两种模型。
+    """
+    import base64
+    key = require_env("MIMO_API_KEY")
+    base = (os.environ.get("MIMO_BASE_URL", "").strip()
+            or "https://api.xiaomimimo.com/v1").rstrip("/")
+    model = a.model or os.environ.get("MIMO_TTS_MODEL", "").strip() or "mimo-v2.5-tts"
+    fmt = out.suffix.lstrip(".").lower() or "mp3"
+    if fmt not in {"mp3", "wav"}:
+        fail(f"xiaomi-mimo 仅支持 mp3/wav 输出，收到 .{fmt}；请先输出 mp3 再用 ffmpeg 转码。")
+
+    voice = (a.voice_id or os.environ.get("MIMO_TTS_VOICE", "").strip() or "mimo_default").strip()
+    instruction = instruct_text(getattr(a, "emotion", None))
+    speed = getattr(a, "speed", 1.0)
+    if speed and abs(float(speed) - 1.0) > 0.001:
+        direction = "快" if float(speed) > 1.0 else "慢"
+        instruction = (f"{instruction}；" if instruction else "") + f"语速比正常{direction}{abs(float(speed) - 1.0) * 100:.0f}%"
+
+    audio: dict[str, Any] = {"format": fmt}
+    if model.endswith("-voiceclone"):
+        sample = (getattr(a, "sample", None) or "").strip()
+        if sample:
+            sample_path = Path(sample).expanduser()
+            if not sample_path.is_file():
+                fail(f"--sample 文件不存在：{sample_path}")
+            suffix = sample_path.suffix.lower()
+            mime = {".mp3": "audio/mpeg", ".wav": "audio/wav"}.get(suffix)
+            if not mime:
+                fail("xiaomi-mimo voiceclone 的样本仅支持 mp3 / wav。")
+            voice = f"data:{mime};base64,{base64.b64encode(sample_path.read_bytes()).decode()}"
+        elif not voice.startswith("data:"):
+            fail("mimo-v2.5-tts-voiceclone 需 --sample 样本文件，或 --voice-id 传入 data:audio/...;base64,...")
+        audio["voice"] = voice
+    elif model.endswith("-voicedesign"):
+        design = (a.voice_id or os.environ.get("MIMO_TTS_VOICE", "").strip() or "").strip()
+        if not design or design == "mimo_default":
+            fail("mimo-v2.5-tts-voicedesign 需用 --voice-id 或 MIMO_TTS_VOICE 传入音色描述文本。")
+        instruction = f"{design}；{instruction}" if instruction else design
+    else:
+        audio["voice"] = voice
+
+    messages: list[dict[str, str]] = []
+    if instruction:
+        messages.append({"role": "user", "content": instruction})
+    messages.append({"role": "assistant", "content": a.text})
+
+    resp = http_json(
+        f"{base}/chat/completions",
+        {"Authorization": f"Bearer {key}", "api-key": key},
+        {"model": model, "messages": messages, "audio": audio},
+        timeout=180,
+    )
+    b64 = _chat_audio_data(resp)
+    if not b64:
+        fail(f"xiaomi-mimo 未返回音频：{json.dumps(resp, ensure_ascii=False)[:300]}")
+    try:
+        raw = base64.b64decode(b64)
+    except (ValueError, TypeError):
+        fail("xiaomi-mimo 返回的音频不是合法 Base64。")
+    return _save_bytes(raw, out)
+
+
 def _dig_inline_data(obj: Any) -> str | None:
     """从 generateContent 风格返回里挖 inlineData.data（base64 音频）。"""
     if isinstance(obj, dict):
@@ -524,7 +628,7 @@ def cmd_clone(a) -> int:
     out = Path(a.output).expanduser().resolve()
     dispatch = {"minimax": clone_minimax, "dashscope": clone_dashscope,
                 "fish-audio": clone_fish, "openai-compatible": clone_openai,
-                "gemini": clone_gemini}
+                "gemini": clone_gemini, "xiaomi-mimo": clone_xiaomi}
     result = dispatch[provider](a, out)
     kb = result.stat().st_size / 1024 if result.is_file() else 0
     print(f"✅ {result} ({kb:.0f} KB) [{provider}]")
@@ -582,7 +686,12 @@ def cmd_selftest(_a) -> int:
     _wav = _pcm_to_wav_bytes(b"\x00\x01" * 100)
     assert _wav[:4] == b"RIFF" and b"WAVE" in _wav[:16], "PCM→WAV 头不合法"
     assert _dig_inline_data({"candidates": [{"content": {"parts": [{"inlineData": {"data": "QUJD"}}]}}]}) == "QUJD", "挖 inlineData"
-    print("✅ selftest 通过（provider 校验 / check 缺失检测 / 参数装配 / 情感映射 / gemini PCM）")
+    # xiaomi-mimo：provider 已注册 + chat/completions 音频 Base64 解析（离线）
+    assert "xiaomi-mimo" in PROVIDERS, "xiaomi-mimo 未注册"
+    assert _chat_audio_data({"choices": [{"message": {"audio": {"data": "QUJD"}}}]}) == "QUJD", "MiMo audio.data"
+    assert _chat_audio_data({"choices": [{"message": {"audio": {"data": "data:audio/mp3;base64,QUJD"}}}]}) == "QUJD", "MiMo data URI"
+    assert _chat_audio_data({"choices": []}) == "", "MiMo 空 choices"
+    print("✅ selftest 通过（provider 校验 / check 缺失检测 / 参数装配 / 情感映射 / gemini PCM / MiMo audio）")
     return 0
 
 

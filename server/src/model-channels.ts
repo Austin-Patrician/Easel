@@ -287,8 +287,12 @@ export async function channelSelftest(channel: string): Promise<{
     }
     const started = Date.now();
     try {
+      const headers: Record<string, string> = key ? { Authorization: `Bearer ${key}` } : {};
+      // Xiaomi MiMo documents both Bearer (OpenAI SDK) and `api-key`; send both so
+      // selftest works with the official endpoint and with compatible gateways.
+      if (key && row.slot === "xiaomi-mimo") headers["api-key"] = key;
       const response = await fetch(`${base}/models`, {
-        headers: key ? { Authorization: `Bearer ${key}` } : {},
+        headers,
         signal: AbortSignal.timeout(12_000),
         redirect: "error",
       });

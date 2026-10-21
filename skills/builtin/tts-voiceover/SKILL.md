@@ -12,7 +12,7 @@ layer: produce
 **默认闭源优先**——配了 `.env` 的 `VOICE_PROVIDER`(+ VOICE_API_KEY) 就走闭源云 TTS（voice_clone，
 按句合成+拼接+分句 SRT，有情感、像真人），**没 key 才退 edge**（AI 味、生硬，仅兜底）。
 `--engine closed/edge` 可强制；闭源音色用 `--voice` 传 voice-id（如 `FunAudioLLM/CosyVoice2-0.5B:alex`），
-旁白默认 alex，可用 `VOICE_NARRATOR_VOICE_ID` 覆盖。合成后语音可交 `audio_ops.py`/`video_ops.py` 混音或加到视频。
+旁白默认 alex，可用 `VOICE_NARRATOR_VOICE_ID` 覆盖。小米 MiMo 用 `MIMO_API_KEY` + `MIMO_TTS_VOICE`（默认 `mimo_default`）。合成后语音可交 `audio_ops.py`/`video_ops.py` 混音或加到视频。
 
 ## 输入
 

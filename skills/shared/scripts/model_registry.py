@@ -130,7 +130,7 @@ MODEL_GROUPS: dict[str, dict[str, Any]] = {
         "label": "云端语音 / 声音克隆",
         "settings": [
             _key("VOICE_PROVIDER", "默认语音 provider", required=False, secret=False,
-                 choices=("dashscope", "minimax", "fish-audio", "openai-compatible", "gemini")),
+                 choices=("dashscope", "minimax", "fish-audio", "openai-compatible", "gemini", "xiaomi-mimo")),
             _key("VOICE_NARRATOR_VOICE_ID", "默认旁白 voice-id", required=False, secret=False),
         ],
         "providers": [
@@ -175,6 +175,15 @@ MODEL_GROUPS: dict[str, dict[str, Any]] = {
                     _key("GEMINI_VOICE", "预置音色", required=False, secret=False),
                     _key("GEMINI_BASE_URL", "根地址", required=False, secret=False),
                     _key("GEMINI_TTS_RATE", "采样率", required=False, secret=False),
+                ],
+            },
+            {
+                "id": "xiaomi-mimo", "name": "小米 MiMo TTS", "keys": [
+                    _key("MIMO_API_KEY", "MiMo API Key",
+                         aliases=("XIAOMI_MIMO_API_KEY",)),
+                    _key("MIMO_TTS_MODEL", "TTS 模型", required=False, secret=False),
+                    _key("MIMO_TTS_VOICE", "预置音色", required=False, secret=False),
+                    _key("MIMO_BASE_URL", "根地址", required=False, secret=False),
                 ],
             },
         ],

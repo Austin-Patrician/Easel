@@ -16,9 +16,10 @@
 | `clone`+`minimax` | 好、有情绪、可克隆 | MINIMAX_API_KEY | emotion 枚举（自动映射中文情绪词）|
 | `clone`+`dashscope`（CosyVoice）| 好、中文自然 | DASHSCOPE_API_KEY | 「用<情绪>的语气说」指令 |
 | `clone`+`gemini` | 好、真免费 | GEMINI_API_KEY（Google AI Studio 免费层）| 自然语言前缀（国内需代理）|
+| `clone`+`xiaomi-mimo` | 好、中文预置音色丰富 | MIMO_API_KEY | user 消息自然语言指令 / 音频标签 |
 | `edge`（**仅兜底**）| 平、机器感，仅草稿/群演 | 无 key、外网 | 只有 rate/pitch/volume 微调 |
 
-**配置示例（二选一，落 `.env`；配好后 `dubbing.py cast add --engine clone` 不写 provider 会自动取 `VOICE_PROVIDER`）**：
+**配置示例（三选一，落 `.env`；配好后 `dubbing.py cast add --engine clone` 不写 provider 会自动取 `VOICE_PROVIDER`）**：
 ```bash
 # A) SiliconFlow 云端 CosyVoice2（首选，无需 GPU）
 VOICE_PROVIDER=openai-compatible
@@ -36,6 +37,11 @@ VOICE_INSTRUCT_MODE=inline      # ⚠️ CosyVoice2/SiliconFlow 必设：情感�
 # B) Gemini 免费层
 VOICE_PROVIDER=gemini
 GEMINI_API_KEY=<你的免费key>     #   --voice-id Kore（30 音色）
+# C) 小米 MiMo TTS（预置音色，中文自然）
+VOICE_PROVIDER=xiaomi-mimo
+MIMO_API_KEY=<你的key>
+MIMO_TTS_MODEL=mimo-v2.5-tts
+MIMO_TTS_VOICE=冰糖               # 可选：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
 ```
 
 - `lines.json` 每行的 `emotion`（愤怒/崩溃大哭/冷笑/温柔…）→ 引擎按 provider 自动转成情感参数驱动演绎；写具体越贴戏越好。
@@ -52,6 +58,7 @@ GEMINI_API_KEY=<你的免费key>     #   --voice-id Kore（30 音色）
 | openai-compatible（CosyVoice2）| `FunAudioLLM/CosyVoice2-0.5B:anna` | 女声温婉 → 温柔女主 / 治愈系 |
 | openai-compatible（CosyVoice2）| `FunAudioLLM/CosyVoice2-0.5B:bella` | 女声清亮活泼 → 元气少女 / 妹妹 / 闺蜜 |
 | gemini | `Kore` / `Puck` / `Charon` … | 30 音色，男女多气质（查 provider 文档挑贴合的）|
+| xiaomi-mimo | `mimo_default` / `冰糖` / `茉莉` / `苏打` / `白桦` / `Mia` / `Chloe` / `Milo` / `Dean` | 中文女/男声与英文音色；`冰糖` 适合温柔女声，`苏打`/`白桦` 适合男声 |
 | minimax / dashscope | enroll 得到的 `voice_id` | 需要**专属克隆音色**时（上传样本 → voice_id）|
 
 > CosyVoice2 预置音色名以 provider 实际支持为准（`alex/anna/...` 为常见预置）；不确定就先用 `alex`（男）/`anna`（女）打样，再按听感换。**同性别多角色**先换不同预置音色，换不开再叠 pitch/rate（见二）。

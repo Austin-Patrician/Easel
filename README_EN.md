@@ -167,6 +167,16 @@ GEMINI_API_KEY=...
 GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
 ```
 
+Xiaomi MiMo TTS uses an OpenAI-compatible `chat/completions` request with an `audio` field (not `/audio/speech`). Easel ships a dedicated `xiaomi-mimo` adapter:
+
+```dotenv
+VOICE_PROVIDER=xiaomi-mimo
+MIMO_API_KEY=...
+MIMO_TTS_MODEL=mimo-v2.5-tts
+MIMO_TTS_VOICE=冰糖          # optional: mimo_default / 冰糖 / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean
+# MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+```
+
 Publishing mode:
 
 ```dotenv

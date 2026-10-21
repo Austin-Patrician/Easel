@@ -178,6 +178,16 @@ GEMINI_API_KEY=...
 GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
 ```
 
+小米 MiMo TTS 使用 OpenAI 兼容的 `chat/completions` + `audio` 字段（不是 `/audio/speech`），Easel 已内置 `xiaomi-mimo` 适配器：
+
+```dotenv
+VOICE_PROVIDER=xiaomi-mimo
+MIMO_API_KEY=...
+MIMO_TTS_MODEL=mimo-v2.5-tts
+MIMO_TTS_VOICE=冰糖          # 可选：mimo_default / 冰糖 / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean
+# MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+```
+
 发布模式：
 
 ```dotenv

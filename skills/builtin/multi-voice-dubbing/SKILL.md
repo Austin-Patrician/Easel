@@ -26,6 +26,7 @@ layer: produce
 | `edge`（默认，免费兜底）| ⚠️ 平、机器感，仅供草稿 | 无 key、外网 | 仅 rate/pitch/volume 微调 |
 | `clone`+`openai-compatible`→**SiliconFlow CosyVoice2**（推荐）| 好、中文自然 | VOICE_API_KEY（便宜/新用户赠额）| 内联 `<\|endofprompt\|>` 指令 |
 | `clone`+`gemini` | 好、**真免费** | GEMINI_API_KEY（Google 免费层，国内需代理）| 自然语言前缀 |
+| `clone`+`xiaomi-mimo` | 好、中文预置音色丰富 | MIMO_API_KEY | 自然语言指令 / 音频标签 |
 | `clone`+`minimax` / `dashscope` | 好、有情绪 | 各家 key | emotion 枚举 / instruct |
 
 **推荐 SiliconFlow**（云端 CosyVoice2、无需 GPU、中文最稳）配置落 `.env`：

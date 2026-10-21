@@ -19,6 +19,7 @@ All notable changes to Easel are documented in this file.
 - pi session persistence under `outputs/_pi/sessions/`, bindings under `outputs/_pi/bindings/`, and per-turn JSONL job logs for reconnect/replay.
 - `.env` `EASEL_DIRECT_API_*` is registered as the pi provider `easel-direct`; pi's own login and built-in providers also work.
 - Web model settings can now add, edit, and delete custom pi providers directly in `models.json` (provider ID, base URL, API protocol, API key, and model IDs). Changes take effect on the next chat turn without restarting Easel.
+- Added a Xiaomi MiMo TTS (`xiaomi-mimo`) voice provider for the 配音 channel. It uses MiMo's OpenAI-compatible `POST /v1/chat/completions` + `audio` request shape, with preset voices such as `mimo_default` / `冰糖` / `茉莉`.
 - Shared TypeScript routes for accounts, calendar, publishing, profiles, and media model channels.
 
 ### Changed
@@ -31,6 +32,7 @@ All notable changes to Easel are documented in this file.
 
 - `setup.sh` / `setup.ps1` now install the Playwright Chromium build matching the installed Playwright version, so a Playwright upgrade no longer breaks QR login with a missing `chromium_headless_shell` executable. Use `--skip-browser` / `-SkipBrowser` to opt out.
 - The “还没有配置模型” banner now clears immediately after a pi provider is saved with usable models, instead of staying visible until the settings panel is closed.
+- `voice_clone.py` now uses the optional `certifi` CA bundle when available, fixing `CERTIFICATE_VERIFY_FAILED` on python.org macOS installs without a default OpenSSL trust store.
 
 ### Removed
 

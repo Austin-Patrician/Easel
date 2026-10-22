@@ -24,7 +24,8 @@ dashscope·gemini·openai 自然语言指令；SiliconFlow CosyVoice2 用内联 
   【fish-audio】 FISH_API_KEY，可选 FISH_BASE_URL
   【openai-compatible】 VOICE_API_KEY、VOICE_BASE_URL，可选 VOICE_MODEL、VOICE_INSTRUCT_MODE(field|inline)
   【gemini】 GEMINI_API_KEY，可选 GEMINI_TTS_MODEL / GEMINI_VOICE / GEMINI_BASE_URL
-  【xiaomi-mimo】 MIMO_API_KEY，可选 MIMO_TTS_MODEL / MIMO_TTS_VOICE / MIMO_BASE_URL
+  【xiaomi-mimo】 MIMO_API_KEY，可选 MIMO_TTS_MODEL / MIMO_TTS_VOICE / MIMO_BASE_URL /
+                 MIMO_STYLE_PROMPT（导演式自然语言指令，放在 user message，不朗读）
 
   ── SiliconFlow 硅基流动（云端 CosyVoice2，无需 GPU，中文情感、便宜/新用户有赠额）──
      VOICE_PROVIDER=openai-compatible
@@ -41,6 +42,7 @@ dashscope·gemini·openai 自然语言指令；SiliconFlow CosyVoice2 用内联 
      MIMO_API_KEY=<你的 key>
      MIMO_TTS_MODEL=mimo-v2.5-tts        # 预置音色；另支持 voicedesign / voiceclone
      MIMO_TTS_VOICE=冰糖                  # 可选：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
+     MIMO_STYLE_PROMPT=像同事在会议室白板前讲清楚一件事，结论先行、克制、口语化。
 
 子命令：
     check     离线校验当前 provider 所需 env（不发请求）
@@ -192,6 +194,25 @@ def instruct_text(emotion_cn: str | None) -> str:
     if not e:
         return ""
     return f"用{e}的语气说"
+
+
+def mimo_instruction(emotion_cn: str | None, speed: float = 1.0) -> str:
+    """MiMo TTS 的导演指令：固定风格 + 逐行情绪 + 语速。
+
+    MIMO_STYLE_PROMPT 是整段音色的“导演提示”，放在 user message，不会被朗读。
+    逐行 emotion 追加为一句具体情绪，避免把十几种情绪压成一个泛化的「用X的语气说」。
+    """
+    parts: list[str] = []
+    style = env_lookup("MIMO_STYLE_PROMPT")
+    if style:
+        parts.append(style)
+    emotion = (emotion_cn or "").strip()
+    if emotion:
+        parts.append(f"这一句的情绪是「{emotion}」，按这个情绪演，但不要夸张。")
+    if speed and abs(float(speed) - 1.0) > 0.001:
+        direction = "快" if float(speed) > 1.0 else "慢"
+        parts.append(f"整段语速比正常{direction}{abs(float(speed) - 1.0) * 100:.0f}%，保持自然。")
+    return "\n".join(parts)
 
 
 # ── HTTP ────────────────────────────────────────────────────
@@ -529,11 +550,7 @@ def clone_xiaomi(a, out: Path) -> Path:
         fail(f"xiaomi-mimo 仅支持 mp3/wav 输出，收到 .{fmt}；请先输出 mp3 再用 ffmpeg 转码。")
 
     voice = (a.voice_id or os.environ.get("MIMO_TTS_VOICE", "").strip() or "mimo_default").strip()
-    instruction = instruct_text(getattr(a, "emotion", None))
-    speed = getattr(a, "speed", 1.0)
-    if speed and abs(float(speed) - 1.0) > 0.001:
-        direction = "快" if float(speed) > 1.0 else "慢"
-        instruction = (f"{instruction}；" if instruction else "") + f"语速比正常{direction}{abs(float(speed) - 1.0) * 100:.0f}%"
+    instruction = mimo_instruction(getattr(a, "emotion", None), float(getattr(a, "speed", 1.0) or 1.0))
 
     audio: dict[str, Any] = {"format": fmt}
     if model.endswith("-voiceclone"):
@@ -691,7 +708,19 @@ def cmd_selftest(_a) -> int:
     assert _chat_audio_data({"choices": [{"message": {"audio": {"data": "QUJD"}}}]}) == "QUJD", "MiMo audio.data"
     assert _chat_audio_data({"choices": [{"message": {"audio": {"data": "data:audio/mp3;base64,QUJD"}}}]}) == "QUJD", "MiMo data URI"
     assert _chat_audio_data({"choices": []}) == "", "MiMo 空 choices"
-    print("✅ selftest 通过（provider 校验 / check 缺失检测 / 参数装配 / 情感映射 / gemini PCM / MiMo audio）")
+    old_style = os.environ.get("MIMO_STYLE_PROMPT")
+    try:
+        os.environ["MIMO_STYLE_PROMPT"] = "像同事在白板前讲清楚一件事"
+        ins = mimo_instruction("疑惑", 1.1)
+        assert "像同事在白板前讲清楚一件事" in ins, "MiMo 风格提示未注入"
+        assert "「疑惑」" in ins, "MiMo 情绪未注入"
+        assert "快10%" in ins, "MiMo 语速未注入"
+    finally:
+        if old_style is None:
+            os.environ.pop("MIMO_STYLE_PROMPT", None)
+        else:
+            os.environ["MIMO_STYLE_PROMPT"] = old_style
+    print("✅ selftest 通过（provider 校验 / check 缺失检测 / 参数装配 / 情感映射 / gemini PCM / MiMo audio+style）")
     return 0
 
 

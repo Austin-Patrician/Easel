@@ -116,6 +116,10 @@ function mediaRows(spec: RegistryGroup, group: string, env: Record<string, strin
 }
 
 function transcribeRows(env: Record<string, string>): Array<Record<string, unknown>> {
+  const configured = String(env.TRANSCRIBE_PROVIDER ?? "").trim().toLowerCase();
+  const chosen = configured && configured !== "auto"
+    ? configured
+    : (isSet(env.MIMO_API_KEY) && isSet(env.MIMO_ASR_MODEL) ? "xiaomi-mimo" : "siliconflow");
   return [
     {
       order: 0,
@@ -134,11 +138,25 @@ function transcribeRows(env: Record<string, string>): Array<Record<string, unkno
       name: "siliconflow",
       sub: "硅基流动",
       type: "openai",
-      model: "SenseVoiceSmall",
-      baseUrl: "https://api.siliconflow.cn/v1",
+      model: String(env.SILICONFLOW_ASR_MODEL ?? "").trim() || "SenseVoiceSmall",
+      baseUrl: String(env.SILICONFLOW_BASE_URL ?? "").trim() || "https://api.siliconflow.cn/v1",
       keyMasked: isSet(env.SILICONFLOW_API_KEY) ? mask(env.SILICONFLOW_API_KEY ?? "") : "",
-      role: "主",
+      role: chosen === "siliconflow" ? "主" : "备",
       result: isSet(env.SILICONFLOW_API_KEY) ? "已配置" : "缺 key",
+      modelEditable: true,
+      baseEditable: true,
+    },
+    {
+      slot: "xiaomi-mimo",
+      order: 2,
+      name: "xiaomi-mimo",
+      sub: "小米 MiMo ASR · mimo-v2.5-asr",
+      type: "openai",
+      model: String(env.MIMO_ASR_MODEL ?? "").trim() || "mimo-v2.5-asr",
+      baseUrl: String(env.MIMO_BASE_URL ?? "").trim() || "https://api.xiaomimimo.com/v1",
+      keyMasked: isSet(env.MIMO_API_KEY) ? mask(env.MIMO_API_KEY ?? "") : "",
+      role: chosen === "xiaomi-mimo" ? "主" : "备",
+      result: isSet(env.MIMO_API_KEY) ? "已配置" : "缺 key",
       modelEditable: true,
       baseEditable: true,
     },
@@ -209,13 +227,27 @@ export async function saveModelRows(
   }
   if (channel === "transcribe") {
     const updates: Record<string, string> = {};
+    let primary = "";
     for (const row of rows) {
-      if (String(row.slot ?? "") !== "siliconflow") continue;
+      const slot = String(row.slot ?? "").trim();
+      if (slot !== "siliconflow" && slot !== "xiaomi-mimo") continue;
       const base = String(row.baseUrl ?? "").trim().replace(/\/+$/, "");
       const key = String(row.key ?? "").trim();
-      if (base) updates.SILICONFLOW_BASE_URL = base;
-      if (key) updates.SILICONFLOW_API_KEY = key;
+      const model = String(row.model ?? "").trim();
+      if (base && !/^https?:\/\//i.test(base)) throw new Error("ASR 根地址需是合法的 http(s):// 地址");
+      if (/\s/.test(key)) throw new Error("ASR API Key 不能包含空白字符");
+      if (slot === "siliconflow") {
+        if (base) updates.SILICONFLOW_BASE_URL = base;
+        if (key) updates.SILICONFLOW_API_KEY = key;
+        if (model) updates.SILICONFLOW_ASR_MODEL = model;
+      } else {
+        if (base) updates.MIMO_BASE_URL = base;
+        if (key) updates.MIMO_API_KEY = key;
+        if (model) updates.MIMO_ASR_MODEL = model;
+      }
+      if (row.primary === true) primary = slot;
     }
+    if (primary) updates.TRANSCRIBE_PROVIDER = primary;
     if (!Object.keys(updates).length) throw new Error("没有可保存的改动（key 留空表示不改）");
     saveEnvUpdates(updates);
     return { ok: true, note: "语音转写配置已写入 .env" };
@@ -275,6 +307,7 @@ export async function channelSelftest(channel: string): Promise<{
     if (!/^https?:\/\//i.test(base) || /^(—|官方|（未配置）|本机|内建默认)$/.test(base)) continue;
     let key = "";
     if (row.slot === "siliconflow") key = String(env.SILICONFLOW_API_KEY ?? "");
+    if (row.slot === "xiaomi-mimo") key = String(env.MIMO_API_KEY ?? "");
     if (row.slot === "pi") key = String(env.EASEL_DIRECT_API_KEY ?? "");
     if (!key && row.slot) {
       try {

@@ -10,9 +10,11 @@ layer: produce
 
 把文案 / 脚本合成为 AI 语音（口播、旁白、朗读）。共享脚本 `skills/shared/scripts/tts.py speak`：
 **默认闭源优先**——配了 `.env` 的 `VOICE_PROVIDER`(+ VOICE_API_KEY) 就走闭源云 TTS（voice_clone，
-按句合成+拼接+分句 SRT，有情感、像真人），**没 key 才退 edge**（AI 味、生硬，仅兜底）。
+有情感、像真人），**没 key 才退 edge**（AI 味、生硬，仅兜底）。
 `--engine closed/edge` 可强制；闭源音色用 `--voice` 传 voice-id（如 `FunAudioLLM/CosyVoice2-0.5B:alex`），
-旁白默认 alex，可用 `VOICE_NARRATOR_VOICE_ID` 覆盖。小米 MiMo 用 `MIMO_API_KEY` + `MIMO_TTS_VOICE`（默认 `mimo_default`）。合成后语音可交 `audio_ops.py`/`video_ops.py` 混音或加到视频。
+旁白默认 alex，可用 `VOICE_NARRATOR_VOICE_ID` 覆盖。小米 MiMo 用 `MIMO_API_KEY` + `MIMO_TTS_VOICE`（默认 `mimo_default`），
+还会把 `MIMO_STYLE_PROMPT` 作为导演指令传给模型；MiMo 按整段/语义块合成（不再逐句重新起调），
+字幕仍按句比例估时。其它 provider 仍按句合成+拼接+分句 SRT。合成后语音可交 `audio_ops.py`/`video_ops.py` 混音或加到视频。
 
 ## 输入
 
@@ -48,6 +50,13 @@ export https_proxy=http://<代理host>:<端口> http_proxy=http://<代理host>:<
 ```bash
 python skills/shared/scripts/tts.py voices          # 常用中文音色 + 简介
 python skills/shared/scripts/tts.py voices --all    # 拉全量 zh- 音色（需外网）
+```
+
+MiMo 音色：`mimo_default` / `冰糖` / `茉莉` / `苏打` / `白桦` / `Mia` / `Chloe` / `Milo` / `Dean`。
+要压掉“播音腔/广告腔”，在 `.env` 配 `MIMO_STYLE_PROMPT`（自然语言描述角色、场景、停顿、重音），例如：
+
+```bash
+MIMO_STYLE_PROMPT=像同事在会议室白板前讲清楚一件事：结论先行，语速正常偏慢，判断句和数字前后留半拍，句尾自然落下，不要播音腔。
 ```
 
 ### 1. 合成配音 speak

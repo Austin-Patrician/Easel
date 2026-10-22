@@ -33,7 +33,7 @@ layer: produce
 产线第二步要把口播里说的话转成带时间轴的文字稿。三级降级，越靠前越省：
 
 1. **tier1 现成稿（最优）**：源片自带字幕/台词就用它——`start --transcript 路径`。`.srt`/`.vtt` 会自动转成段级 `transcript.json`（保留时间轴）；`.json`（segments 结构）直接用。**Easel 做的口播剧一般自带 SRT，走这条即可，不下模型。**
-2. **tier2 云端 ASR API**：没现成稿但配了 `SILICONFLOW_API_KEY`（env）→ 自动调硅基流动（默认 `XingChenAGI/XingChenGSR-V1.0`，可用 `SILICONFLOW_ASR_MODEL` / `SILICONFLOW_BASE_URL` 覆盖）。key 只从环境变量读，勿写进命令/仓库。
+2. **tier2 云端 ASR API**：没现成稿但配了云端 key → 自动走云端。`TRANSCRIBE_PROVIDER` 可选 `xiaomi-mimo` / `siliconflow` / `auto`；小米 MiMo 用 `MIMO_API_KEY`（默认 `mimo-v2.5-asr`），硅基流动用 `SILICONFLOW_API_KEY`（默认 `XingChenAGI/XingChenGSR-V1.0`，可用 `SILICONFLOW_ASR_MODEL` / `SILICONFLOW_BASE_URL` 覆盖）。key 只从环境变量/.env 读，勿写进命令/仓库。
 3. **tier3 本地 whisper（兜底）**：都没有才用本地 large-v3（首次下约 3GB）。需 `faster-whisper`。
 
 ### 让用户看得见（产物贴进对话 · 免上传）

@@ -182,7 +182,35 @@ MODEL_GROUPS: dict[str, dict[str, Any]] = {
                     _key("MIMO_API_KEY", "MiMo API Key",
                          aliases=("XIAOMI_MIMO_API_KEY",)),
                     _key("MIMO_TTS_MODEL", "TTS 模型", required=False, secret=False),
-                    _key("MIMO_TTS_VOICE", "预置音色", required=False, secret=False),
+                    _key("MIMO_TTS_VOICE", "预置音色", required=False, secret=False,
+                         choices=("mimo_default", "冰糖", "茉莉", "苏打", "白桦",
+                                  "Mia", "Chloe", "Milo", "Dean")),
+                    _key("MIMO_STYLE_PROMPT", "导演提示词（自然语言风格，不会被朗读）",
+                         required=False, secret=False, aliases=("VOICE_STYLE_PROMPT",)),
+                    _key("MIMO_BASE_URL", "根地址", required=False, secret=False),
+                ],
+            },
+        ],
+    },
+    "transcribe": {
+        "label": "语音转写 ASR",
+        "settings": [
+            _key("TRANSCRIBE_PROVIDER", "默认 ASR provider", required=False, secret=False,
+                 choices=("auto", "local", "xiaomi-mimo", "siliconflow")),
+        ],
+        "providers": [
+            {
+                "id": "siliconflow", "name": "硅基流动 ASR", "keys": [
+                    _key("SILICONFLOW_API_KEY", "SiliconFlow API Key"),
+                    _key("SILICONFLOW_ASR_MODEL", "ASR 模型", required=False, secret=False),
+                    _key("SILICONFLOW_BASE_URL", "根地址", required=False, secret=False),
+                ],
+            },
+            {
+                "id": "xiaomi-mimo", "name": "小米 MiMo ASR", "keys": [
+                    _key("MIMO_API_KEY", "MiMo API Key",
+                         aliases=("XIAOMI_MIMO_API_KEY",)),
+                    _key("MIMO_ASR_MODEL", "ASR 模型", required=False, secret=False),
                     _key("MIMO_BASE_URL", "根地址", required=False, secret=False),
                 ],
             },

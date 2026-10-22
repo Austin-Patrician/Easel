@@ -298,7 +298,7 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
   const modelTool = tools.find((t) => t.id === 'model');
   const localReady = fw?.state === 'ok' && modelTool?.state === 'ok';
   const localRow: ModelRow = {
-    order: 2, name: 'local-whisper', sub: '本机兜底 · 免 key', type: 'local',
+    order: 3, name: 'local-whisper', sub: '本机兜底 · 免 key', type: 'local',
     model: 'faster-whisper', baseUrl: '本机', keyMasked: '—', role: '备',
     result: localReady ? '✓ 已就绪' : (tools.length ? '未装（去环境安装）' : '检测中…'),
   };
@@ -318,7 +318,8 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
     // 兼容不同供应商的 Base URL
     // （后端 _SLOT_ENV_KEYS 已含 anthropic，改地址必须重填 Key 那道闸同样生效）。
     anthropic: { model: true, base: true },
-    siliconflow: { model: false, base: true },
+    siliconflow: { model: true, base: true },
+    'xiaomi-mimo': { model: true, base: true },
     custom: { model: true, base: true },
   };
 
@@ -333,6 +334,9 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
 
   const setMediaPrimary = (ch: string, i: number) =>
     setMediaRows((m) => ({ ...m, [ch]: (m[ch] || []).map((r, j) => ({ ...r, role: j === i ? '主' : '备' })) }));
+
+  const setTransPrimary = (i: number) =>
+    setTransRows((rows) => rows.map((r, j) => ({ ...r, role: j === i ? '主' : '备' })));
 
   const mediaOk = (ch: string) => (mediaRows[ch] || []).some((r) => r.result === '已配置');
 
@@ -585,7 +589,7 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
     );
   };
 
-  const transOk = transRows.length > 1 && transRows[1].result.includes('已配置');
+  const transOk = transRows.some((r) => Boolean(r.slot) && r.result.includes('已配置'));
 
   return (
     <div
@@ -661,13 +665,13 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
                 {chan === 'transcribe' && (
                   <section className="st-panel active">
                     <div className="panel-top">
-                      <span className={`pill ${transOk ? 'ok' : 'warn'}`}><span className="dot" />{transOk ? '主通道在线' : (localReady ? '本地兜底生效' : '备用待安装')}</span>
+                      <span className={`pill ${transOk ? 'ok' : 'warn'}`}><span className="dot" />{transOk ? '有可用提供商' : (localReady ? '本地兜底生效' : '备用待安装')}</span>
                       <span className="desc">三级链：自带字幕 → API → 本地兜底</span>
                       <span className="spacer" />
                       <button className="btn btn-sm" onClick={() => void doSelftest('transcribe')} disabled={testing}>自测本通道</button>
                     </div>
-                    {renderBoard([...transRows, localRow], { onRow: (i, p) => updateRow(setTransRows, i, p) }, 'transcribe')}
-                    <div className="foot-note">有字幕不下模型；API 通道缺 key 自动落到本地 whisper（本地组件在「环境安装」页装）。保存即写入 .env 生效。</div>
+                    {renderBoard([...transRows, localRow], { onRow: (i, p) => updateRow(setTransRows, i, p), onPrimary: (i) => setTransPrimary(i) }, 'transcribe')}
+                    <div className="foot-note">有字幕不下模型；API 通道缺 key 自动落到本地 whisper。点「主」选择默认 ASR（小米 MiMo / 硅基流动），保存即写入 .env 生效。</div>
                   </section>
                 )}
 

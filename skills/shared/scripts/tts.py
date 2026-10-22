@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -88,21 +89,87 @@ def _has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _probe_duration(path: Path) -> float:
-    """ffprobe 取时长（秒）；无 ffprobe 或失败返回 -1。"""
-    if shutil.which("ffprobe") is None:
-        return -1.0
-    cmd = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_format", str(path),
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        return -1.0
+_MP3_BITRATES = {
+    (3, 3): (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0),
+    (3, 2): (0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0),
+    (3, 1): (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0),
+    (2, 3): (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0),
+    (2, 2): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+    (2, 1): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+}
+
+
+def _mp3_duration(path: Path) -> float:
+    """无 ffprobe 时按 MP3 帧头逐帧累计时长（兼容 CBR/VBR）。"""
     try:
-        return float(json.loads(proc.stdout).get("format", {}).get("duration", 0) or 0)
-    except (json.JSONDecodeError, ValueError):
+        data = path.read_bytes()
+    except OSError:
         return -1.0
+    pos = 0
+    if data[:3] == b"ID3" and len(data) >= 10:
+        size = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) | \
+               ((data[8] & 0x7F) << 7) | (data[9] & 0x7F)
+        pos = 10 + size
+    frames = 0
+    total_samples = 0
+    sample_rate = 0
+    size_limit = len(data)
+    while pos + 4 <= size_limit:
+        if data[pos] != 0xFF or (data[pos + 1] & 0xE0) != 0xE0:
+            pos += 1
+            continue
+        b1, b2 = data[pos + 1], data[pos + 2]
+        version = (b1 >> 3) & 0x03
+        layer = (b1 >> 1) & 0x03
+        bitrate_index = (b2 >> 4) & 0x0F
+        rate_index = (b2 >> 2) & 0x03
+        padding = (b2 >> 1) & 0x01
+        if version == 1 or layer == 0 or bitrate_index in (0, 15) or rate_index == 3:
+            pos += 1
+            continue
+        rate_table = ((44100, 48000, 32000) if version == 3
+                      else (22050, 24000, 16000) if version == 2
+                      else (11025, 12000, 8000))
+        sample_rate = rate_table[rate_index]
+        bitrate = _MP3_BITRATES[(3 if version == 3 else 2, layer)][bitrate_index] * 1000
+        if layer == 3:
+            frame_len = (12 * bitrate // sample_rate + padding) * 4
+            samples = 384
+        elif layer == 2:
+            frame_len = 144 * bitrate // sample_rate + padding
+            samples = 1152
+        elif version == 3:
+            frame_len = 144 * bitrate // sample_rate + padding
+            samples = 1152
+        else:
+            frame_len = 72 * bitrate // sample_rate + padding
+            samples = 576
+        if frame_len < 4 or pos + frame_len > size_limit:
+            break
+        frames += 1
+        total_samples += samples
+        pos += frame_len
+    return total_samples / sample_rate if frames and sample_rate else -1.0
+
+
+def _probe_duration(path: Path) -> float:
+    """取时长（秒）：优先 ffprobe，缺失时对 mp3 用帧头估算；失败返回 -1。"""
+    if shutil.which("ffprobe") is not None:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_format", str(path),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0:
+            try:
+                duration = float(json.loads(proc.stdout).get("format", {}).get("duration", 0) or 0)
+                if duration > 0:
+                    return duration
+            except (json.JSONDecodeError, ValueError):
+                pass
+    if path.suffix.lower() == ".mp3":
+        return _mp3_duration(path)
+    return -1.0
 
 
 def _read_text(args) -> str:
@@ -230,9 +297,50 @@ def _closed_voice_id(voice: str | None) -> str | None:
 
 def _split_sentences(text: str) -> list[str]:
     """按中英文句末标点/换行切句（用于逐句闭源合成 + 生成分句 SRT）。"""
-    import re
     parts = re.split(r"(?<=[。！？!?；;\n])", text)
     return [s.strip() for s in parts if s and s.strip()]
+
+
+def _rate_to_speed(rate: str | None) -> float:
+    """edge 风格 --rate +10% → MiMo --speed 1.1；无法解析时返回 1.0。"""
+    if not rate:
+        return 1.0
+    m = re.fullmatch(r"\s*([+-]?\d+(?:\.\d+)?)\s*%\s*", rate)
+    if not m:
+        return 1.0
+    return max(0.5, min(2.0, 1.0 + float(m.group(1)) / 100))
+
+
+def _split_mimo_chunks(text: str, max_chars: int = 1200) -> list[str]:
+    """MiMo 按段/按语义块切分，保留段内韵律；不要按句逐条请求。
+
+    短文案整段一次合成；长段落按句聚合到 max_chars，避免在句子中间硬切。
+    """
+    text = text.strip()
+    if not text:
+        return []
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    chunks: list[str] = []
+    for p in paragraphs:
+        if len(p) <= max_chars:
+            chunks.append(p)
+            continue
+        cur = ""
+        for s in _split_sentences(p) or [p]:
+            if len(s) > max_chars:
+                if cur.strip():
+                    chunks.append(cur.strip())
+                    cur = ""
+                chunks.append(s.strip())
+                continue
+            if cur and len(cur) + len(s) > max_chars:
+                chunks.append(cur.strip())
+                cur = s
+            else:
+                cur += s
+        if cur.strip():
+            chunks.append(cur.strip())
+    return chunks or [text]
 
 
 def _srt_ts(sec: float) -> str:
@@ -266,11 +374,84 @@ def _concat_mp3(parts: list[Path], out: Path) -> None:
                 _die(f"ffmpeg 拼接失败:\n{proc.stderr.strip()}", code=4)
 
 
-def _run_closed(text: str, out: Path, fmt: str, subtitle: Path | None, voice: str | None) -> None:
+def _run_closed_mimo(
+    text: str,
+    out: Path,
+    fmt: str,
+    subtitle: Path | None,
+    voice: str | None,
+    rate: str | None = None,
+) -> None:
+    """MiMo 专用：整段/按语义块合成，避免逐句重新起调；字幕按句比例估时。"""
+    provider = _closed_provider()
+    if not provider:
+        raise ClosedTTSError("未配置 VOICE_PROVIDER")
+    vc = Path(__file__).resolve().parent / "voice_clone.py"
+    vid = _closed_voice_id(voice)
+    chunks = _split_mimo_chunks(text)
+    # 典型短视频文案 1 块合成即可；没有 ffmpeg 时，3000 字以内也强行整段，避免无法拼接。
+    if len(chunks) > 1 and not _has_ffmpeg() and len(text) <= 3000:
+        chunks = [text.strip()]
+    if len(chunks) > 1 and not _has_ffmpeg():
+        raise ClosedTTSError(
+            "MiMo 长文本分段后需 ffmpeg 拼接；请缩短文本或安装 ffmpeg，或改用 --engine edge。"
+        )
+    speed = _rate_to_speed(rate)
+    with tempfile.TemporaryDirectory() as d:
+        parts: list[Path] = []
+        for i, chunk in enumerate(chunks):
+            pm = Path(d) / f"p{i:03d}.mp3"
+            cmd = [sys.executable, str(vc), "clone", "--provider", provider,
+                   "--text", chunk, "-o", str(pm)]
+            if vid:
+                cmd += ["--voice-id", vid]
+            if abs(speed - 1.0) > 0.001:
+                cmd += ["--speed", f"{speed:.3f}"]
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+            if r.returncode != 0 or not pm.is_file() or pm.stat().st_size == 0:
+                raise ClosedTTSError((r.stderr or r.stdout or "voice_clone 无输出").strip()[-300:])
+            parts.append(pm)
+        target_mp3 = out if fmt == "mp3" else Path(d) / "joined.mp3"
+        _concat_mp3(parts, target_mp3)
+        if subtitle:
+            lines_srt, t, idx = [], 0.0, 1
+            for chunk, pm in zip(chunks, parts):
+                dur = _probe_duration(pm)
+                if dur <= 0:  # 无 ffprobe → 按字数粗估（中文约 4.5 字/秒）
+                    dur = max(1.0, len(chunk) / 4.5)
+                sents = _split_sentences(chunk) or [chunk]
+                weights = [max(1, len(s)) for s in sents]
+                total = sum(weights)
+                chunk_t = t
+                for s, w in zip(sents, weights):
+                    sdur = dur * w / total
+                    lines_srt.append(
+                        f"{idx}\n{_srt_ts(chunk_t)} --> {_srt_ts(chunk_t + sdur)}\n{s}\n"
+                    )
+                    idx += 1
+                    chunk_t += sdur
+                t += dur
+            subtitle.write_text("\n".join(lines_srt), encoding="utf-8")
+        if fmt != "mp3":
+            _transcode(target_mp3, out, fmt)
+
+
+def _run_closed(
+    text: str,
+    out: Path,
+    fmt: str,
+    subtitle: Path | None,
+    voice: str | None,
+    rate: str | None = None,
+) -> None:
     """闭源云 TTS 口播：按句 voice_clone 合成 → 拼接 → 按各句真实时长写分句 SRT。失败抛 ClosedTTSError。"""
     provider = _closed_provider()
     if not provider:
         raise ClosedTTSError("未配置 VOICE_PROVIDER")
+    if provider == "xiaomi-mimo":
+        _run_closed_mimo(text, out, fmt, subtitle, voice, rate)
+        return
     vc = Path(__file__).resolve().parent / "voice_clone.py"
     vid = _closed_voice_id(voice)
     sents = _split_sentences(text) or [text.strip()]
@@ -282,7 +463,8 @@ def _run_closed(text: str, out: Path, fmt: str, subtitle: Path | None, voice: st
                    "--text", s, "-o", str(pm)]
             if vid:
                 cmd += ["--voice-id", vid]
-            r = subprocess.run(cmd, capture_output=True, text=True)
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
             if r.returncode != 0 or not pm.is_file() or pm.stat().st_size == 0:
                 raise ClosedTTSError((r.stderr or r.stdout or "voice_clone 无输出").strip()[-300:])
             parts.append(pm)
@@ -322,7 +504,7 @@ def cmd_speak(args) -> int:
     use_closed = engine == "closed" or (engine == "auto" and _closed_provider())
     if use_closed:
         try:
-            _run_closed(text, out, fmt, subtitle, args.voice)
+            _run_closed(text, out, fmt, subtitle, args.voice, getattr(args, "rate", None))
             dur = _probe_duration(out)
             dur_str = f"{dur:.1f}s" if dur >= 0 else "时长未知(无 ffprobe)"
             print(f"✅ {out}  ({out.stat().st_size/1024:.0f} KB, {dur_str}, 闭源 {_closed_provider()})")

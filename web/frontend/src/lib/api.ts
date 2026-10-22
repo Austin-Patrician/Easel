@@ -32,10 +32,13 @@ export interface StatusResponse {
   personas: PersonaItem[];
 }
 
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface HarnessSettingsResponse {
   runtime: string;
   models: Record<string, string>;
   sandbox: string;
+  thinking: string;
   locked: boolean;
   agents: { id: string; label: string; protocol: string; installed: boolean; install_hint: string }[];
 }
@@ -47,18 +50,21 @@ export function fetchHarnessSettings(): Promise<HarnessSettingsResponse> {
 export interface HarnessModel {
   id: string;
   label: string;
+  provider: string;
   default: boolean;
+  reasoning?: boolean;
+  thinkingLevels?: ThinkingLevel[];
 }
 
 export function fetchHarnessModels(runtime: string): Promise<{ runtime: string; models: HarnessModel[] }> {
   return request(`/api/settings/harness/models/${encodeURIComponent(runtime)}`, { method: 'POST' });
 }
 
-export function saveHarnessSettings(runtime: string, model: string, sandbox: string): Promise<HarnessSettingsResponse> {
+export function saveHarnessSettings(runtime: string, model: string, sandbox: string, thinking?: string): Promise<HarnessSettingsResponse> {
   return request('/api/settings/harness', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runtime, model, sandbox }),
+    body: JSON.stringify({ runtime, model, sandbox, ...(thinking === undefined ? {} : { thinking }) }),
   });
 }
 
@@ -108,6 +114,25 @@ export function savePiProvider(input: PiProviderInput): Promise<PiProviderMutati
 
 export function deletePiProvider(id: string): Promise<PiProviderMutationResponse> {
   return request(`/api/settings/pi/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export interface PiProviderModelsResponse {
+  baseUrl: string;
+  models: string[];
+  fetchedAt: number;
+}
+
+export function fetchPiProviderModels(input: {
+  id?: string;
+  baseUrl: string;
+  api: string;
+  apiKey: string;
+}): Promise<PiProviderModelsResponse> {
+  return request('/api/settings/pi/providers/models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
 
 export interface PersonaItem {
@@ -395,6 +420,14 @@ export interface ChatQuestion {
   questions: ChatQuestionItem[];
   expiresAtMs?: number;
 }
+export type ApprovalMode = 'manual' | 'auto';
+export function setChatApproval(sessionId: string, approval: ApprovalMode): Promise<{ ok: boolean }> {
+  return request('/api/chat/approval', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, approval }),
+  });
+}
 export async function answerQuestion(
   payload: { questionId: string; answers: Record<string, string[]>; resolvedBy?: string },
 ): Promise<{ ok: boolean; error?: string }> {
@@ -667,6 +700,9 @@ export function streamChat(
   attachments: UploadedFile[] = [],
   onQuestion?: (q: ChatQuestion) => void,
   onHeartbeat?: (note: string) => void,
+  approval: ApprovalMode = 'manual',
+  model = '',
+  thinkingLevel: ThinkingLevel | '' = '',
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -760,7 +796,10 @@ export function streamChat(
         const res = first
           ? await fetch(`${BASE}/api/chat/stream`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments }),
+              body: JSON.stringify({
+                message, persona: persona || undefined, sessionId, turnId, attachments, approval,
+                model: model || undefined, thinkingLevel: thinkingLevel || undefined,
+              }),
               signal: controller.signal,
             })
           : await fetch(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`, {

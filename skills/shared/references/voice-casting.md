@@ -42,6 +42,7 @@ VOICE_PROVIDER=xiaomi-mimo
 MIMO_API_KEY=<你的key>
 MIMO_TTS_MODEL=mimo-v2.5-tts
 MIMO_TTS_VOICE=冰糖               # 可选：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
+MIMO_STYLE_PROMPT=像同事在白板前讲清楚一件事：结论先行，句尾自然落下，不要播音腔。
 ```
 
 - `lines.json` 每行的 `emotion`（愤怒/崩溃大哭/冷笑/温柔…）→ 引擎按 provider 自动转成情感参数驱动演绎；写具体越贴戏越好。

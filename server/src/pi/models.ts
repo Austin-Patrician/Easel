@@ -1,7 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { PI_AGENT_DIR, isConfigured, mask, readEnv, writeJson } from "../config.js";
+import {
+  PI_AGENT_DIR,
+  isConfigured,
+  mask,
+  readEnv,
+  writeJson,
+  type ThinkingLevel,
+} from "../config.js";
 
 type PiModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
@@ -10,6 +19,8 @@ export interface PiModelInfo {
   label: string;
   provider: string;
   default: boolean;
+  reasoning: boolean;
+  thinkingLevels: ThinkingLevel[];
 }
 
 export const PI_PROVIDER_APIS = [
@@ -42,6 +53,12 @@ export interface PiProviderInput {
   api: string;
   apiKey?: string;
   models: string[];
+}
+
+export interface PiProviderModelsResult {
+  baseUrl: string;
+  models: string[];
+  fetchedAt: number;
 }
 
 const DIRECT_PROVIDER = "easel-direct";
@@ -268,6 +285,113 @@ export function deletePiProvider(idInput: string): boolean {
   return true;
 }
 
+function expandApiKey(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "";
+  if (raw.startsWith("$")) return (readEnv()[raw.slice(1)] ?? "").trim();
+  return raw;
+}
+
+/** Resolve the key stored in models.json for a saved provider (supports $ENV refs). */
+export function savedPiProviderKey(idInput: string): string {
+  const id = String(idInput ?? "").trim();
+  if (!PROVIDER_ID.test(id)) return "";
+  try {
+    const raw = providersObject(readModelsDocument())[id];
+    if (!raw) return "";
+    return expandApiKey(typeof raw.apiKey === "string" ? raw.apiKey : "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Fetch the model catalog from a provider before it is saved.
+ *
+ * OpenAI-compatible and Anthropic endpoints expose GET /models; Google exposes
+ * the same path with an API key query parameter. Providers without a portable
+ * catalog endpoint ask the user to enter model IDs manually.
+ */
+export async function fetchPiProviderModels(input: {
+  id?: string;
+  baseUrl: string;
+  api: string;
+  apiKey?: string;
+}): Promise<PiProviderModelsResult> {
+  const baseUrl = String(input.baseUrl ?? "").trim().replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(`${baseUrl}/models`);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("bad protocol");
+  } catch {
+    throw new Error("Base URL 必须是合法的 http(s) 地址");
+  }
+
+  const api = String(input.api ?? "").trim();
+  if (api === "azure-openai-responses") {
+    throw new Error("Azure OpenAI 不支持自动拉取模型，请手动填写模型 ID");
+  }
+  if (api === "bedrock-converse-stream" || api === "google-vertex" || api === "pi-messages") {
+    throw new Error(`该 API 类型（${api}）不支持自动拉取模型，请手动填写模型 ID`);
+  }
+
+  const key = expandApiKey(String(input.apiKey ?? "").trim()) || savedPiProviderKey(input.id ?? "");
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (api === "anthropic-messages") {
+    if (key) headers["x-api-key"] = key;
+    headers["anthropic-version"] = "2023-06-01";
+  } else if (api === "google-generative-ai") {
+    if (key) url.searchParams.set("key", key);
+  } else if (key) {
+    headers.Authorization = `Bearer ${key}`;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(20_000),
+      redirect: "follow",
+    });
+  } catch (error) {
+    throw new Error(`无法连接模型列表端点：${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) {
+    const hint = response.status === 401 || response.status === 403 ? "，请检查 API Key" : "";
+    throw new Error(`模型列表请求失败：HTTP ${response.status}${hint}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  const models = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === "string") {
+      const id = value.trim().replace(/^models\//, "");
+      if (id) models.add(id);
+      return;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const item = value as Record<string, unknown>;
+    const id = item.id ?? item.name;
+    if (typeof id === "string") {
+      const normalized = id.trim().replace(/^models\//, "");
+      if (normalized) models.add(normalized);
+    }
+  };
+  if (Array.isArray(payload)) {
+    payload.forEach(add);
+  } else if (payload && typeof payload === "object") {
+    const data = payload as Record<string, unknown>;
+    if (Array.isArray(data.data)) data.data.forEach(add);
+    if (Array.isArray(data.models)) data.models.forEach(add);
+  }
+
+  return {
+    baseUrl,
+    models: [...models].sort((a, b) => a.localeCompare(b)),
+    fetchedAt: Date.now(),
+  };
+}
+
 export async function createModelRuntime(): Promise<ModelRuntime> {
   ensurePiModelsConfig();
   return ModelRuntime.create({
@@ -293,14 +417,164 @@ export function resolveConfiguredModel(runtime: ModelRuntime, configured: string
   return runtime.getModel(value.slice(0, slash), value.slice(slash + 1));
 }
 
+const BUILTIN_PROVIDER_IDS = new Set<string>(getBuiltinProviders());
+const BUILTIN_PROVIDER_PRIORITY = [
+  "deepseek",
+  "zai",
+  "zai-coding-cn",
+  "opencode",
+  "opencode-go",
+  "openrouter",
+  "anthropic",
+  "openai",
+  "google",
+  "google-vertex",
+  "mistral",
+  "xai",
+  "moonshotai",
+  "moonshotai-cn",
+  "minimax",
+  "minimax-cn",
+  "nvidia",
+  "fireworks",
+  "together",
+  "huggingface",
+  "cloudflare-workers-ai",
+  "vercel-ai-gateway",
+  "qwen-token-plan",
+  "qwen-token-plan-cn",
+  "qwen-token-plan-individual",
+  "xiaomi",
+];
+const BUILTIN_PROVIDER_RANK = new Map(BUILTIN_PROVIDER_PRIORITY.map((id, index) => [id, index]));
+const THINKING_COMPAT_KEYS = [
+  "supportsReasoningEffort",
+  "requiresThinkingAsText",
+  "requiresReasoningContentOnAssistantMessages",
+  "thinkingFormat",
+  "chatTemplateKwargs",
+  "chatTemplateArgs",
+  "thinkingTokenBudgetField",
+  "supportsThinkingTokenBudget",
+] as const;
+
+interface BuiltinCatalogEntry {
+  provider: string;
+  models: PiModel[];
+}
+
+let builtinCatalog: BuiltinCatalogEntry[] | undefined;
+
+function builtinCatalogEntries(): BuiltinCatalogEntry[] {
+  if (!builtinCatalog) {
+    builtinCatalog = getBuiltinProviders()
+      .map((provider) => ({
+        provider,
+        models: getBuiltinModels(provider) as PiModel[],
+      }))
+      .sort(
+        (a, b) =>
+          (BUILTIN_PROVIDER_RANK.get(a.provider) ?? Number.MAX_SAFE_INTEGER) -
+            (BUILTIN_PROVIDER_RANK.get(b.provider) ?? Number.MAX_SAFE_INTEGER) ||
+          a.provider.localeCompare(b.provider),
+      );
+  }
+  return builtinCatalog;
+}
+
+function normalizedModelKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function explicitReasoningSetting(provider: string, modelId: string): boolean | undefined {
+  try {
+    const raw = providersObject(readModelsDocument())[provider];
+    const entries = Array.isArray(raw?.models) ? raw.models : [];
+    const entry = entries.find(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        String((item as Record<string, unknown>).id ?? "") === modelId,
+    );
+    if (!entry || typeof entry !== "object") return undefined;
+    const value = (entry as Record<string, unknown>).reasoning;
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function findBuiltinModel(model: PiModel): PiModel | undefined {
+  const idKey = normalizedModelKey(model.id);
+  const nameKey = normalizedModelKey(model.name);
+  if (!idKey && !nameKey) return undefined;
+  const catalog = builtinCatalogEntries();
+  for (const sameApi of [true, false]) {
+    for (const entry of catalog) {
+      const candidates = entry.models.filter(
+        (candidate) =>
+          candidate.reasoning && (!sameApi || candidate.api === model.api),
+      );
+      const idMatch = idKey
+        ? candidates.find((candidate) => normalizedModelKey(candidate.id) === idKey)
+        : undefined;
+      if (idMatch) return idMatch;
+      const nameMatch = nameKey
+        ? candidates.find((candidate) => normalizedModelKey(candidate.name) === nameKey)
+        : undefined;
+      if (nameMatch) return nameMatch;
+    }
+  }
+  return undefined;
+}
+
+function mergeThinkingCompat(model: PiModel, builtin: PiModel): PiModel["compat"] {
+  if (model.api !== "openai-completions") return model.compat;
+  const source =
+    builtin.compat && typeof builtin.compat === "object"
+      ? (builtin.compat as Record<string, unknown>)
+      : undefined;
+  if (!source) return model.compat;
+  const picked: Record<string, unknown> = {};
+  for (const key of THINKING_COMPAT_KEYS) {
+    if (source[key] !== undefined) picked[key] = source[key];
+  }
+  if (!Object.keys(picked).length) return model.compat;
+  const base =
+    model.compat && typeof model.compat === "object"
+      ? (model.compat as Record<string, unknown>)
+      : {};
+  return { ...base, ...picked } as PiModel["compat"];
+}
+
+export function applyBuiltinCapabilities(model: PiModel): PiModel {
+  if (BUILTIN_PROVIDER_IDS.has(model.provider)) return model;
+  const explicit = explicitReasoningSetting(model.provider, model.id);
+  if (explicit === false) return model;
+  if (model.reasoning && model.thinkingLevelMap) return model;
+  const builtin = findBuiltinModel(model);
+  if (!builtin?.reasoning) return model;
+  return {
+    ...model,
+    reasoning: true,
+    thinkingLevelMap: model.thinkingLevelMap ?? builtin.thinkingLevelMap,
+    compat: mergeThinkingCompat(model, builtin),
+  } as PiModel;
+}
+
 export async function listModels(runtime: ModelRuntime): Promise<PiModelInfo[]> {
   const available = await runtime.getAvailable();
-  const items = available.map((model) => ({
-    id: `${model.provider}/${model.id}`,
-    label: `${model.name || model.id} · ${model.provider}`,
-    provider: model.provider,
-    default: false,
-  }));
+  const items = available.map((model) => {
+    const effective = applyBuiltinCapabilities(model);
+    return {
+      id: `${effective.provider}/${effective.id}`,
+      label: `${effective.name || effective.id} · ${effective.provider}`,
+      provider: effective.provider,
+      default: false,
+      reasoning: effective.reasoning,
+      thinkingLevels: getSupportedThinkingLevels(effective),
+    };
+  });
   items.sort((a, b) => a.label.localeCompare(b.label));
   if (items.length) items[0].default = true;
   return items;

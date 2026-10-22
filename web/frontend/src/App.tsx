@@ -15,8 +15,8 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat } from './lib/api';
-import type { PersonaItem, UploadedFile, ChatQuestion } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, setChatApproval } from './lib/api';
+import type { PersonaItem, UploadedFile, ChatQuestion, ApprovalMode, ThinkingLevel } from './lib/api';
 import { questionStatus } from './lib/api';
 import { deleteSession as deleteRemoteSession } from './lib/api';
 import {
@@ -273,6 +273,9 @@ export default function App() {
     text: string,
     persona: string | undefined,
     attachments: UploadedFile[] = [],
+    approval: ApprovalMode = 'manual',
+    model = '',
+    thinkingLevel: ThinkingLevel | '' = '',
   ) => {
     const turnId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(`easel_pending_turn:${sessionId}`, turnId); } catch { /* ignore */ }
@@ -369,6 +372,7 @@ export default function App() {
       },
       // onHeartbeat：防呆心跳（30s 静默）。只设独立的「未卡住」提示，绝不写 activity/thinking → 不顶掉真实状态。
       (note) => setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)),
+      approval, model, thinkingLevel,
     );
   }, [appendAssistant, clearStream]);
 
@@ -376,6 +380,9 @@ export default function App() {
   const resumePendingTurn = useCallback((sessionId: string) => {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return;  // 本标签正在跑，不插手
     const s = sessionsRef.current.find((x) => x.id === sessionId);
+    const approval = s?.approval || 'manual';
+    const model = s?.model || '';
+    const thinkingLevel = s?.thinking || '';
     const last = s?.messages[s.messages.length - 1];
     if (!last || last.role !== 'user') return;   // 没有悬空的用户消息 = 无需恢复
     let turnId = s.pendingTurnId;
@@ -478,6 +485,7 @@ export default function App() {
       },
       // onHeartbeat：同上，独立的「未卡住」提示，不覆盖 activity/thinking。
       (note) => setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)),
+      approval, model, thinkingLevel,
     );
   }, [appendAssistant, clearStream]);
 
@@ -499,6 +507,9 @@ export default function App() {
     if ((!agentMessage && attachments.length === 0) || streamCtl.current[sessionId]) return;
     const cur = sessionsRef.current.find((s) => s.id === sessionId);
     const persona = cur?.persona || selectedPersona || undefined;
+    const approval = cur?.approval || 'manual';
+    const model = cur?.model || '';
+    const thinkingLevel = cur?.thinking || '';
     setSessions((prev) => {
       const next = prev.map((s) => {
         if (s.id !== sessionId) return s;
@@ -518,12 +529,41 @@ export default function App() {
       saveSessions(next);
       return next;
     });
-    startStream(sessionId, agentMessage, persona, attachments);
+    startStream(sessionId, agentMessage, persona, attachments, approval, model, thinkingLevel);
   }, [selectedPersona, startStream]);
 
   const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[]) => {
     sendUserAndStream(sessionId, displayText, attachments);
   }, [sendUserAndStream]);
+
+  const handleApprovalChange = useCallback((sessionId: string, approval: ApprovalMode) => {
+    setSessions((prev) => {
+      const next = prev.map((s) => (s.id === sessionId ? { ...s, approval } : s));
+      saveSessions(next);
+      return next;
+    });
+    void setChatApproval(sessionId, approval).catch(() => {});
+  }, []);
+
+  const handleModelChange = useCallback((sessionId: string, model: string) => {
+    setSessions((prev) => {
+      const next = prev.map((s) => (s.id === sessionId
+        ? { ...s, model: model.trim() || undefined }
+        : s));
+      saveSessions(next);
+      return next;
+    });
+  }, []);
+
+  const handleThinkingChange = useCallback((sessionId: string, thinking: ThinkingLevel | '') => {
+    setSessions((prev) => {
+      const next = prev.map((s) => (s.id === sessionId
+        ? { ...s, thinking: thinking || undefined }
+        : s));
+      saveSessions(next);
+      return next;
+    });
+  }, []);
 
   // 重试/编辑重发：从该用户消息处截断（丢弃它及其之后），用 text 重新发起。
   const handleResend = useCallback((
@@ -719,6 +759,10 @@ export default function App() {
             onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
               activeSession.id, userIndex, displayText, attachments, legacyAgentText,
             )}
+            approval={activeSession.approval || 'manual'}
+            onApprovalChange={(mode) => handleApprovalChange(activeSession.id, mode)}
+            onModelChange={(model) => handleModelChange(activeSession.id, model)}
+            onThinkingChange={(thinking) => handleThinkingChange(activeSession.id, thinking)}
             onQuestionAnswered={(qid) => {
               answeredRef.current.add(qid);
               // 已答题从流式状态中移除——切走/切回会话都不再重现（组件内部 state 会在重挂时清零，只藏不移除没用）

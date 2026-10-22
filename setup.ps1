@@ -36,8 +36,10 @@ $npm = Get-CommandPath 'npm'
 if (-not $npm) { Stop-Install '未找到 npm，请先安装 Node.js。' }
 
 $NodeVersion = (& $Node -p 'process.versions.node').Trim()
-& $Node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=19)?0:1)'
-if ($LASTEXITCODE -ne 0) { Stop-Install "Node.js >= 22.19 才满足 pi SDK 要求；当前是 $NodeVersion。" }
+$NodeParts = $NodeVersion.Split('.')
+if ([int]$NodeParts[0] -lt 22 -or ([int]$NodeParts[0] -eq 22 -and [int]$NodeParts[1] -lt 19)) {
+    Stop-Install "Node.js >= 22.19 才满足 pi SDK 要求；当前是 $NodeVersion。"
+}
 Write-Ok "Node.js $NodeVersion"
 
 $Python = Get-CommandPath 'python'
@@ -45,7 +47,7 @@ if (-not $Python) { $Python = Get-CommandPath 'python3' }
 
 if ($Check) {
     if ($Python) {
-        $pythonVersion = (& $Python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))').Trim()
+        $pythonVersion = (& $Python -c 'import sys; print(sys.version.split()[0])').Trim()
         Write-Ok "Python $pythonVersion"
     } else {
         Write-Warn '未找到 python3；媒体处理、浏览器发布等 Python 技能将不可用'

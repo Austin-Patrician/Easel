@@ -2,10 +2,11 @@ import { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
+import SessionControls from './SessionControls';
 import type { ChatSession, ChatMessage, StreamState } from '../lib/store';
 import { uploadFiles, adoptOversize } from '../lib/api';
-import type { UploadedFile } from '../lib/api';
-import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
+import type { UploadedFile, ApprovalMode, ThinkingLevel } from '../lib/api';
+import { IconArrowUp, IconStop, IconPlus, IconFile, IconShield, IconChevron, IconCheck } from './icons';
 
 interface ChatPageProps {
   session: ChatSession;
@@ -19,6 +20,10 @@ interface ChatPageProps {
     legacyAgentText?: string,
   ) => void; // 重试：仅对最后一轮
   onQuestionAnswered?: (questionId: string) => void;   // 某道问答题提交成功（App 记录答过，重放不再出现）
+  approval: ApprovalMode;
+  onApprovalChange: (approval: ApprovalMode) => void;
+  onModelChange: (model: string) => void;
+  onThinkingChange: (thinking: ThinkingLevel | '') => void;
 }
 
 // 空态推荐（贴合 Easel 社媒创作场景）
@@ -35,15 +40,21 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ session, stream, onSend, onStop, onResend, onQuestionAnswered }: ChatPageProps) {
+export default function ChatPage({
+  session, stream, onSend, onStop, onResend, onQuestionAnswered, approval, onApprovalChange,
+  onModelChange, onThinkingChange,
+}: ChatPageProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [maxMb, setMaxMb] = useState(50);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const toolMenuRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
 
   const isStreaming = !!stream;
@@ -53,6 +64,21 @@ export default function ChatPage({ session, stream, onSend, onStop, onResend, on
     fetch('/api/upload/limits').then((r) => r.json())
       .then((d) => { if (d?.max_mb) setMaxMb(d.max_mb); }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => { setMenuOpen(false); setApprovalOpen(false); };
+    const onPointerDown = (e: MouseEvent) => {
+      if (!toolMenuRef.current?.contains(e.target as Node)) close();
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
 
   const doUpload = async (fs: FileList | File[]) => {
     const arr = Array.from(fs);
@@ -112,6 +138,8 @@ export default function ChatPage({ session, stream, onSend, onStop, onResend, on
     onSend(trimmed, attachments);
     setInput('');
     setAttachments([]);
+    setMenuOpen(false);
+    setApprovalOpen(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -159,10 +187,67 @@ export default function ChatPage({ session, stream, onSend, onStop, onResend, on
       <input ref={fileInputRef} type="file" multiple hidden
         onChange={(e) => { if (e.target.files) doUpload(e.target.files); e.target.value = ''; }} />
       <div className="composer-bar">
-        <button className="composer-attach-btn" onClick={() => fileInputRef.current?.click()}
-          disabled={isStreaming || uploading} title={`添加素材（图片/文档）；超过 ${maxMb}MB 的大文件将自动存为本地素材（不走上传）`}>
-          <IconPlus size={15} /> {uploading ? '上传中…' : '素材'}
-        </button>
+        <div className="composer-bar-left">
+          <div className="composer-tool-menu" ref={toolMenuRef}>
+          <button className="composer-attach-btn" type="button"
+            onClick={() => { setMenuOpen((v) => !v); setApprovalOpen(false); }}
+            aria-haspopup="menu" aria-expanded={menuOpen}
+            title={`添加素材或设置审批模式（当前：${approval === 'auto' ? 'Auto' : 'Manual'}）`}>
+            <IconPlus size={15} /> {uploading ? '上传中…' : '添加'}
+            {approval === 'auto' && <span className="composer-auto-dot" title="审批自动放行" />}
+          </button>
+          {menuOpen && (
+            <div className="composer-menu" role="menu">
+              <button className="composer-menu-item" type="button" role="menuitem"
+                disabled={isStreaming || uploading}
+                onClick={() => {
+                  setMenuOpen(false); setApprovalOpen(false); fileInputRef.current?.click();
+                }}>
+                <IconFile size={15} />
+                <span>添加素材</span>
+                <span className="composer-menu-note">图片 / 文档</span>
+              </button>
+              <div className="composer-menu-sub"
+                onMouseEnter={() => { if (!isStreaming) setApprovalOpen(true); }}
+                onMouseLeave={() => setApprovalOpen(false)}>
+                <button className="composer-menu-item" type="button"
+                  disabled={isStreaming}
+                  aria-haspopup="menu" aria-expanded={approvalOpen}
+                  title={isStreaming ? '正在响应，结束后可切换审批模式' : undefined}
+                  onClick={() => setApprovalOpen((v) => !v)}>
+                  <IconShield size={15} />
+                  <span>审批模式</span>
+                  <span className="composer-menu-current">{approval === 'auto' ? 'Auto' : 'Manual'}</span>
+                  <IconChevron size={14} className="composer-menu-chevron" />
+                </button>
+                {approvalOpen && !isStreaming && (
+                  <div className="composer-submenu" role="menu">
+                    <button className="composer-submenu-item" type="button" role="menuitemradio"
+                      aria-checked={approval === 'manual'}
+                      onClick={() => {
+                        onApprovalChange('manual'); setMenuOpen(false); setApprovalOpen(false);
+                      }}>
+                      <span className="composer-submenu-check">{approval === 'manual' && <IconCheck size={13} />}</span>
+                      <span><strong>Manual</strong><small>每次确认</small></span>
+                    </button>
+                    <button className="composer-submenu-item" type="button" role="menuitemradio"
+                      aria-checked={approval === 'auto'}
+                      onClick={() => {
+                        onApprovalChange('auto'); setMenuOpen(false); setApprovalOpen(false);
+                      }}>
+                      <span className="composer-submenu-check">{approval === 'auto' && <IconCheck size={13} />}</span>
+                      <span><strong>Auto</strong><small>自动放行后续审批</small></span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          </div>
+          <SessionControls model={session.model} thinking={session.thinking}
+            disabled={isStreaming} onModelChange={onModelChange}
+            onThinkingChange={onThinkingChange} />
+        </div>
         <span className="composer-hint">{isStreaming ? '生成中…' : 'Enter 发送 · Shift+Enter 换行'}</span>
         {isStreaming ? (
           <button className="send-btn" onClick={onStop} title="停止生成"><IconStop size={15} /></button>

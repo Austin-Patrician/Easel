@@ -19,6 +19,7 @@ import {
   deleteBinding,
   ensureDirs,
   harnessSettings,
+  normalizeThinkingLevel,
   readBinding,
   readEnv,
   readJson,
@@ -46,11 +47,12 @@ import {
   skillList,
 } from "./content.js";
 import { readJsonStrict } from "./config.js";
-import { answerQuestion, installHostBridge, questionStatus } from "./pi/host.js";
+import { answerQuestion, installHostBridge, questionStatus, setTurnApproval } from "./pi/host.js";
 import {
   PI_PROVIDER_APIS,
   createModelRuntime,
   deletePiProvider,
+  fetchPiProviderModels,
   listModels,
   modelRuntimePathHints,
   piProviders,
@@ -189,6 +191,7 @@ function settingsPayload() {
     runtime: "pi",
     models: settings.models,
     sandbox: settings.sandbox,
+    thinking: settings.thinking,
     locked: false,
     agents: [
       {
@@ -254,7 +257,8 @@ app.post("/api/settings/harness", wrap(async (req, res) => {
   }
   const model = body.model === undefined ? "" : String(body.model);
   const sandbox = body.sandbox === undefined ? undefined : String(body.sandbox);
-  saveHarnessSettings({ model, sandbox });
+  const thinking = body.thinking === undefined ? undefined : String(body.thinking);
+  saveHarnessSettings({ model, sandbox, thinking });
   res.json(settingsPayload());
 }));
 
@@ -299,6 +303,20 @@ app.post("/api/settings/pi/providers", wrap(async (req, res) => {
     ...piProviderPayload(),
     models: await listModels(runtime),
   });
+}));
+
+app.post("/api/settings/pi/providers/models", wrap(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  try {
+    res.json(await fetchPiProviderModels({
+      id: body.id === undefined ? "" : String(body.id),
+      baseUrl: String(body.baseUrl ?? ""),
+      api: String(body.api ?? ""),
+      apiKey: body.apiKey === undefined ? "" : String(body.apiKey),
+    }));
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "拉取模型列表失败");
+  }
 }));
 
 app.delete("/api/settings/pi/providers/:id", wrap(async (req, res) => {
@@ -348,11 +366,33 @@ app.post("/api/settings/models/selftest", wrap(async (req, res) => {
 app.post("/api/settings/models/available", wrap(async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const base = String(body.baseUrl ?? "").trim().replace(/\/+$/, "");
-  const key = String(body.key ?? "").trim();
+  const slot = String(body.slot ?? "").trim();
+  let key = String(body.key ?? "").trim();
+  if (!key && slot) {
+    const env = readEnv();
+    const saved = ({
+      siliconflow: {
+        key: env.SILICONFLOW_API_KEY,
+        base: env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1",
+      },
+      "xiaomi-mimo": {
+        key: env.MIMO_API_KEY,
+        base: env.MIMO_BASE_URL || "https://api.xiaomimimo.com/v1",
+      },
+    } as Record<string, { key?: string; base?: string }>)[slot];
+    if (saved && base === String(saved.base ?? "").trim().replace(/\/+$/, "")) {
+      key = String(saved.key ?? "").trim();
+    }
+  }
   if (!/^https?:\/\//i.test(base)) fail("Base URL 必须是 http(s) 地址");
   try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (key) {
+      headers.Authorization = `Bearer ${key}`;
+      if (slot === "xiaomi-mimo") headers["api-key"] = key;
+    }
     const response = await fetch(`${base}/models`, {
-      headers: key ? { Authorization: `Bearer ${key}` } : {},
+      headers,
       signal: AbortSignal.timeout(20000),
     });
     if (!response.ok) fail(`模型列表请求失败：HTTP ${response.status}`, 502);
@@ -667,6 +707,14 @@ app.post("/api/chat/stream", wrap(async (req, res) => {
   const message = String(body.message ?? "");
   const persona = body.persona ? String(body.persona) : undefined;
   const attachments = Array.isArray(body.attachments) ? (body.attachments as AttachmentRef[]) : [];
+  const approval = body.approval === "auto" ? "auto" : "manual";
+  const model = body.model === undefined || body.model === "" ? undefined : String(body.model);
+  const thinkingLevel = body.thinkingLevel === undefined
+    ? undefined
+    : normalizeThinkingLevel(body.thinkingLevel);
+  if (body.thinkingLevel !== undefined && thinkingLevel === undefined) {
+    fail("思考深度无效，只允许 off/minimal/low/medium/high/xhigh/max");
+  }
   if (!message.trim() && !attachments.length) fail("消息不能为空");
 
   sseHeaders(res);
@@ -687,6 +735,9 @@ app.post("/api/chat/stream", wrap(async (req, res) => {
       prompt: message,
       persona,
       attachments,
+      approval,
+      model,
+      thinkingLevel: thinkingLevel || undefined,
       turnId: tid,
       emit,
     });
@@ -750,6 +801,13 @@ app.get("/api/chat/last/:sessionId", wrap(async (req, res) => {
     return;
   }
   res.json(readLastTurn(sid));
+}));
+
+app.post("/api/chat/approval", wrap(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sid = sessionId(body.sessionId);
+  const approval = body.approval === "auto" ? "auto" : "manual";
+  res.json({ ok: true, active: setTurnApproval(sid, approval) });
 }));
 
 app.post("/api/chat/stop", wrap(async (req, res) => {

@@ -28,9 +28,13 @@ python skills/shared/scripts/voice_clone.py check --provider minimax --env-file 
 | `fish-audio` | Fish Audio | `FISH_API_KEY`（可选 `FISH_BASE_URL`） |
 | `openai-compatible` | OpenAI 兼容 /audio/speech | `VOICE_API_KEY`、`VOICE_BASE_URL`（预置 voice，非零样本克隆） |
 | `gemini` | Google Gemini TTS | `GEMINI_API_KEY`（可选 `GEMINI_TTS_MODEL`/`GEMINI_VOICE`/`GEMINI_BASE_URL`） |
-| `xiaomi-mimo` | 小米 MiMo TTS（预置 / 音色设计 / 音色复刻） | `MIMO_API_KEY`（可选 `MIMO_TTS_MODEL`/`MIMO_TTS_VOICE`/`MIMO_BASE_URL`） |
+| `xiaomi-mimo` | 小米 MiMo TTS（预置 / 音色设计 / 音色复刻） | `MIMO_API_KEY`（可选 `MIMO_TTS_MODEL`/`MIMO_TTS_VOICE`/`MIMO_STYLE_PROMPT`/`MIMO_BASE_URL`） |
 
 > ⚠️ 各 provider 依公开 API 文档实现，端点/模型名可用 env 覆盖以适配实际参数。
+>
+> MiMo 的 `MIMO_STYLE_PROMPT` 是整段导演指令（自然语言，放在 user message，不会被朗读），
+> 适合写“像同事在白板前讲清楚一件事、结论先行、句尾自然落下、不要播音腔”；逐行情绪仍用 `--emotion`，
+> `--speed` 会作为语速指令追加。预置音色：`mimo_default` / `冰糖` / `茉莉` / `苏打` / `白桦` / `Mia` / `Chloe` / `Milo` / `Dean`。
 
 执行前先跑 `model_registry.py configured --group voice --env-file .env`。只有一个可用时显式选择；多个可用且用户没点名时，列出 provider/模型询问本次使用哪个，不按 `VOICE_PROVIDER` 擅自选择。
 

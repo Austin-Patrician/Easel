@@ -17,11 +17,13 @@ export interface QuestionPayload {
 }
 
 export type EventSink = (kind: string, text?: string, extra?: Record<string, unknown>) => void;
+export type ApprovalMode = "manual" | "auto";
 
 export interface ActiveTurn {
   sessionId: string;
   sessionKey: string;
   sandbox: Sandbox;
+  approval: ApprovalMode;
   emit: EventSink;
 }
 
@@ -42,6 +44,17 @@ const pending = new Map<string, PendingQuestion>();
 
 export function registerTurn(turn: ActiveTurn): void {
   activeTurns.set(turn.sessionId, turn);
+}
+
+export function setTurnApproval(sessionKey: string, approval: ApprovalMode): boolean {
+  let updated = false;
+  for (const turn of activeTurns.values()) {
+    if (turn.sessionKey !== sessionKey) continue;
+    turn.approval = approval;
+    turn.emit("activity", `审批模式：${approval === "auto" ? "自动放行后续确认" : "手动确认"}`);
+    updated = true;
+  }
+  return updated;
 }
 
 export function unregisterTurn(sessionId: string): void {
@@ -216,20 +229,25 @@ export async function permission(
   const turn = activeTurns.get(sessionId);
   const sandbox = turn?.sandbox ?? "workspace-write";
   const tool = event.toolName;
-  if (SAFE_READ_TOOLS.has(tool)) return { action: "allow" };
+  const finish = (decision: Decision): Decision => {
+    if (!turn || turn.approval !== "auto" || decision.action !== "ask") return decision;
+    turn.emit("activity", `已自动放行：${tool}`);
+    return { action: "allow" };
+  };
+  if (SAFE_READ_TOOLS.has(tool)) return finish({ action: "allow" });
 
   if (tool === "write" || tool === "edit") {
     if (sandbox === "read-only") {
-      return { action: "deny", reason: "当前为只读权限，不能修改文件" };
+      return finish({ action: "deny", reason: "当前为只读权限，不能修改文件" });
     }
     const target = pathOf(event.input);
     if (target && !inside(event.cwd, target)) {
-      return {
+      return finish({
         action: "ask",
         detail: `pi 请求在工作区外修改文件：\n${target}\n\n允许本次操作？`,
-      };
+      });
     }
-    return { action: "allow" };
+    return finish({ action: "allow" });
   }
 
   if (tool === "bash") {
@@ -241,22 +259,22 @@ export async function permission(
       const safe = SAFE_BASH.test(command.trim())
         && !READ_ONLY_UNSAFE.test(command)
         && !READ_ONLY_MUTATING_FLAGS.test(command);
-      if (safe) return { action: "allow" };
-      return { action: "deny", reason: "当前为只读权限，只允许不含管道、重定向或修改操作的只读命令" };
+      if (safe) return finish({ action: "allow" });
+      return finish({ action: "deny", reason: "当前为只读权限，只允许不含管道、重定向或修改操作的只读命令" });
     }
     if (DANGEROUS_BASH.test(command)) {
-      return {
+      return finish({
         action: "ask",
         detail: `pi 请求执行需要确认的命令：\n\n${command.slice(0, 3000)}\n\n允许本次执行？`,
-      };
+      });
     }
-    return { action: "allow" };
+    return finish({ action: "allow" });
   }
 
-  return {
+  return finish({
     action: "ask",
     detail: `pi 请求使用工具「${tool}」：\n\n${scrubSecrets(JSON.stringify(event.input)).slice(0, 3000)}\n\n允许本次操作？`,
-  };
+  });
 }
 
 export interface HostBridge {

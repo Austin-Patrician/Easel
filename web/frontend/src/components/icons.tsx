@@ -57,6 +57,12 @@ export const IconCopy = ({ size, className, strokeWidth }: P) => (
 export const IconCheck = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}><path d="M20 6 9 17l-5-5" /></svg>
 );
+export const IconShield = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+);
 export const IconEdit = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />

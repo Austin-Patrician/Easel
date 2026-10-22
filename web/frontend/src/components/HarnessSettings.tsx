@@ -3,6 +3,7 @@ import {
   deletePiProvider,
   fetchHarnessModels,
   fetchHarnessSettings,
+  fetchPiProviderModels,
   fetchPiProviders,
   saveHarnessSettings,
   savePiProvider,
@@ -46,6 +47,7 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
   const [settings, setSettings] = useState<HarnessSettingsResponse | null>(null);
   const [model, setModel] = useState('');
   const [sandbox, setSandbox] = useState('workspace-write');
+  const [thinking, setThinking] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [catalogs, setCatalogs] = useState<HarnessModel[]>([]);
@@ -62,6 +64,9 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
   const [providerLoading, setProviderLoading] = useState(true);
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerNote, setProviderNote] = useState('');
+  const [providerModelOptions, setProviderModelOptions] = useState<string[]>([]);
+  const [providerModelLoading, setProviderModelLoading] = useState(false);
+  const [providerModelNote, setProviderModelNote] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -72,6 +77,7 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
       setSettings(value);
       setModel(value.models.pi || '');
       setSandbox(value.sandbox || 'workspace-write');
+      setThinking(value.thinking || '');
       onChange('pi');
     }).catch((error) => {
       if (alive) setNote(`读取失败：${error instanceof Error ? error.message : String(error)}`);
@@ -121,9 +127,11 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
     setBusy(true);
     setNote('');
     try {
-      const value = await saveHarnessSettings('pi', model, sandbox);
+      const value = await saveHarnessSettings('pi', model, sandbox, thinking);
       setSettings(value);
+      setThinking(value.thinking || '');
       onChange('pi');
+      window.dispatchEvent(new Event('easel:harness-settings-changed'));
       setNote('已保存。pi 的会话历史保持连续，不会迁移到其它底座。');
     } catch (error) {
       setNote(`保存失败：${error instanceof Error ? error.message : String(error)}`);
@@ -136,6 +144,8 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
     setEditingProvider('');
     setProviderForm({ ...EMPTY_PROVIDER });
     setProviderNote('');
+    setProviderModelOptions([]);
+    setProviderModelNote('');
   };
 
   const beginEditProvider = (provider: PiProviderSummary) => {
@@ -149,6 +159,42 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
       models: provider.models.join('\n'),
     });
     setProviderNote('');
+    setProviderModelOptions([]);
+    setProviderModelNote('');
+  };
+
+  const pullProviderModels = async () => {
+    if (!providerForm.baseUrl.trim()) {
+      setProviderModelNote('请先填写 Base URL。');
+      return;
+    }
+    setProviderModelLoading(true);
+    setProviderModelNote('');
+    try {
+      const result = await fetchPiProviderModels({
+        id: editingProvider || providerForm.id,
+        baseUrl: providerForm.baseUrl,
+        api: providerForm.api,
+        apiKey: providerForm.apiKey,
+      });
+      setProviderModelOptions(result.models);
+      setProviderModelNote(result.models.length
+        ? `已拉取 ${result.models.length} 个模型，点击标签加入模型 ID 列表。`
+        : '该端点没有返回模型，请手动填写模型 ID。');
+    } catch (error) {
+      setProviderModelNote(`拉取失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setProviderModelLoading(false);
+    }
+  };
+
+  const toggleProviderModel = (id: string) => {
+    setProviderForm((form) => {
+      const selected = new Set(form.models.split(/[\n,]/).map((item) => item.trim()).filter(Boolean));
+      if (selected.has(id)) selected.delete(id);
+      else selected.add(id);
+      return { ...form, models: [...selected].join('\n') };
+    });
   };
 
   const saveProvider = async () => {
@@ -177,6 +223,8 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
       if (result.models.length) onModelConfigured?.();
       setEditingProvider('');
       setProviderForm({ ...EMPTY_PROVIDER });
+      setProviderModelOptions([]);
+      setProviderModelNote('');
       setProviderNote('已写入 pi 的 models.json，下个对话回合即可使用；再点「保存配置」可把它设为当前模型。');
     } catch (error) {
       setProviderNote(`保存失败：${error instanceof Error ? error.message : String(error)}`);
@@ -204,6 +252,10 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
       setProviderBusy(false);
     }
   };
+
+  const selectedProviderModels = new Set(
+    providerForm.models.split(/[\n,]/).map((item) => item.trim()).filter(Boolean),
+  );
 
   return (
     <section className="st-panel active harness-settings" aria-label="Agent 底座设置">
@@ -257,6 +309,25 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
             <code> EASEL_DIRECT_API_* </code>映射为 pi 的 <code>easel-direct</code> 供应商；
             其它 OpenAI / Anthropic / Google 兼容端点可在下方直接写入 pi 的 <code>models.json</code>。</p>
           {modelNote && <p className="desc" role="status">{modelNote}</p>}
+        </div>
+      </div>
+
+      <div className="settings-field">
+        <span className="settings-field-label">思考深度</span>
+        <div className="settings-field-body">
+          <SettingsSelect label="pi 全局思考深度" value={thinking} disabled={busy || settings?.locked}
+            options={[
+              { value: '', label: 'pi 默认（中）' },
+              { value: 'off', label: '关闭' },
+              { value: 'minimal', label: '极低' },
+              { value: 'low', label: '低' },
+              { value: 'medium', label: '中' },
+              { value: 'high', label: '高' },
+              { value: 'xhigh', label: '极高' },
+              { value: 'max', label: '最大' },
+            ]}
+            onChange={setThinking} />
+          <p className="desc">这是新建会话的全局默认值。对话输入区可按会话覆盖；不支持推理的模型会自动忽略或夹取档位。</p>
         </div>
       </div>
 
@@ -341,10 +412,42 @@ export default function HarnessSettings({ onChange, onModelConfigured }: {
             </div>
             <div className="pi-form-row">
               <label htmlFor="pi-provider-models">模型 ID</label>
-              <textarea id="pi-provider-models" className="mock pi-provider-models" rows={3}
-                value={providerForm.models} disabled={providerBusy || settings?.locked}
-                placeholder={'每行一个模型 ID，例如\ngpt-4.1\no3'}
-                onChange={(event) => setProviderForm((form) => ({ ...form, models: event.target.value }))} />
+              <div className="pi-provider-models-field">
+                <textarea id="pi-provider-models" className="mock pi-provider-models" rows={3}
+                  value={providerForm.models} disabled={providerBusy || settings?.locked}
+                  placeholder={'每行一个模型 ID，例如\ngpt-4.1\no3'}
+                  onChange={(event) => setProviderForm((form) => ({ ...form, models: event.target.value }))} />
+                <div className="pi-provider-models-actions">
+                  <button type="button" className="fetch-btn"
+                    disabled={providerBusy || providerModelLoading || settings?.locked}
+                    onClick={() => void pullProviderModels()}>
+                    {providerModelLoading ? '拉取中…' : '拉取模型'}
+                  </button>
+                  {providerModelOptions.length > 0 && (
+                    <button type="button" className="fetch-btn" disabled={providerBusy || settings?.locked}
+                      onClick={() => setProviderForm((form) => ({ ...form, models: providerModelOptions.join('\n') }))}>
+                      全选
+                    </button>
+                  )}
+                  {providerModelNote && (
+                    <span className={`desc pi-provider-note${providerModelNote.includes('失败') ? ' err' : ''}`} role="status">
+                      {providerModelNote}
+                    </span>
+                  )}
+                </div>
+                {providerModelOptions.length > 0 && (
+                  <div className="pi-model-options">
+                    {providerModelOptions.map((id) => (
+                      <button type="button" key={id}
+                        className={`pi-model-option${selectedProviderModels.has(id) ? ' selected' : ''}`}
+                        disabled={providerBusy || settings?.locked}
+                        onClick={() => toggleProviderModel(id)}>
+                        {id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="pi-form-actions">
               <button type="button" className="btn btn-sm" disabled={providerBusy || settings?.locked}

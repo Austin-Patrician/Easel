@@ -20,6 +20,7 @@ All notable changes to Easel are documented in this file.
 - `.env` `EASEL_DIRECT_API_*` is registered as the pi provider `easel-direct`; pi's own login and built-in providers also work.
 - Web model settings can now add, edit, and delete custom pi providers directly in `models.json` (provider ID, base URL, API protocol, API key, and model IDs). Changes take effect on the next chat turn without restarting Easel.
 - Added a Xiaomi MiMo TTS (`xiaomi-mimo`) voice provider for the 配音 channel. It uses MiMo's OpenAI-compatible `POST /v1/chat/completions` + `audio` request shape, with preset voices such as `mimo_default` / `冰糖` / `茉莉`.
+- Added a Xiaomi MiMo ASR (`mimo-v2.5-asr`) transcription provider, selectable in Settings alongside SiliconFlow or local whisper. `TRANSCRIBE_PROVIDER` controls the default; `asr.py` and the video pipeline both fall back to local whisper when no cloud key is configured.
 - Shared TypeScript routes for accounts, calendar, publishing, profiles, and media model channels.
 
 ### Changed

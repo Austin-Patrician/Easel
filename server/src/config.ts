@@ -24,13 +24,23 @@ export const PI_AGENT_DIR = process.env.EASEL_PI_AGENT_DIR
 
 export const DEFAULT_SANDBOX = "workspace-write" as const;
 export const SANDBOXES = new Set(["read-only", "workspace-write"]);
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export type Sandbox = "read-only" | "workspace-write";
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface HarnessSettings {
   runtime: "pi";
   models: Record<string, string>;
   sandbox: Sandbox;
+  thinking: ThinkingLevel | "";
+}
+
+export function normalizeThinkingLevel(value: unknown): ThinkingLevel | "" | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  if (!text) return "";
+  return (THINKING_LEVELS as readonly string[]).includes(text) ? text as ThinkingLevel : undefined;
 }
 
 export class ConfigError extends Error {}
@@ -101,20 +111,29 @@ export function harnessSettings(): HarnessSettings {
   const configuredModel = typeof models.pi === "string" ? models.pi.slice(0, 240) : "";
   const fallbackModel = typeof raw.model === "string" ? raw.model.slice(0, 240) : "";
   const sandbox = raw.sandbox === "read-only" ? "read-only" : DEFAULT_SANDBOX;
+  const thinking = normalizeThinkingLevel(raw.thinking) ?? "";
   return {
     runtime: "pi",
     models: { pi: configuredModel || fallbackModel },
     sandbox,
+    thinking,
   };
 }
 
-export function saveHarnessSettings(patch: { model?: string; sandbox?: string }): HarnessSettings {
+export function saveHarnessSettings(patch: { model?: string; sandbox?: string; thinking?: string }): HarnessSettings {
   const current = harnessSettings();
   const model = typeof patch.model === "string" ? patch.model.trim().slice(0, 240) : current.models.pi;
   if (model && /[\r\n]/.test(model)) throw new ConfigError("模型标识不能包含换行符");
   const sandbox = patch.sandbox ?? current.sandbox;
   if (!SANDBOXES.has(sandbox)) throw new ConfigError("Agent 权限设置无效，只允许只读或工作区写入");
-  const next: HarnessSettings = { runtime: "pi", models: { pi: model }, sandbox: sandbox as Sandbox };
+  const thinking = patch.thinking === undefined ? current.thinking : normalizeThinkingLevel(patch.thinking);
+  if (thinking === undefined) throw new ConfigError("思考深度无效");
+  const next: HarnessSettings = {
+    runtime: "pi",
+    models: { pi: model },
+    sandbox: sandbox as Sandbox,
+    thinking,
+  };
   writeJson(HARNESS_CONFIG, next);
   return next;
 }

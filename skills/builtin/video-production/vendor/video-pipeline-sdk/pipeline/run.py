@@ -33,6 +33,42 @@ from pathlib import Path
 SDK_ROOT = Path(__file__).resolve().parent.parent
 VERSION = "0.3.3"
 
+_ENV_FILE_CACHE: dict[str, str] | None = None
+
+
+def env_value(name: str) -> str:
+    """进程环境优先；再读 EASEL_ROOT/.env，供 tier2 判断云端 key 是否可用。"""
+    global _ENV_FILE_CACHE
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    if _ENV_FILE_CACHE is None:
+        _ENV_FILE_CACHE = {}
+        candidates: list[Path] = []
+        root = os.environ.get("EASEL_ROOT", "").strip()
+        if root:
+            candidates.append(Path(root))
+        candidates.extend([Path.cwd(), *Path.cwd().parents, *SDK_ROOT.parents])
+        env_file = next((base / ".env" for base in candidates if (base / ".env").is_file()), None)
+        if env_file is not None:
+            try:
+                for raw in env_file.read_text(encoding="utf-8-sig").splitlines():
+                    line = raw.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    if key.startswith("export "):
+                        key = key[7:].strip()
+                    val = val.strip()
+                    if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                        val = val[1:-1]
+                    if key:
+                        _ENV_FILE_CACHE[key] = val
+            except OSError:
+                pass
+    return str(_ENV_FILE_CACHE.get(name, "")).strip()
+
 EXIT_OK, EXIT_ERR, EXIT_GATE, EXIT_AWAIT = 0, 1, 2, 3
 
 STAGES = ["ingest", "transcribe", "scenes", "design-table", "scaffold",
@@ -210,7 +246,7 @@ def st_ingest(ctx: dict) -> tuple[str, str]:
 def st_transcribe(ctx: dict) -> tuple[str, str]:
     """转录 · 三级降级（Easel 内置改造）：
       tier1 现成稿（--transcript）：.json 直接用；.srt/.vtt 转段级 transcript.json
-      tier2 云端 ASR API（有 SILICONFLOW_API_KEY 时）
+      tier2 云端 ASR API（小米 MiMo / SiliconFlow，配了 key 才走）
       tier3 本地 whisper large-v3（兜底，需自备/下载 3GB 模型）
     """
     rd, st = ctx["rd"], ctx["state"]
@@ -243,11 +279,22 @@ def st_transcribe(ctx: dict) -> tuple[str, str]:
     src = str(rd / "artifacts" / "proxy.mp4") if (rd / "artifacts" / "proxy.mp4").exists() else st["source"]
 
     # ---- tier2：云端 ASR API（配了 key 才走）----
-    if os.environ.get("SILICONFLOW_API_KEY", "").strip():
+    provider = env_value("TRANSCRIBE_PROVIDER").lower()
+    if provider == "local":
+        cloud_key = ""
+    elif provider == "xiaomi-mimo":
+        cloud_key = env_value("MIMO_API_KEY")
+    elif provider == "siliconflow":
+        cloud_key = env_value("SILICONFLOW_API_KEY")
+    else:
+        cloud_key = (env_value("MIMO_API_KEY") if env_value("MIMO_ASR_MODEL")
+                     else env_value("SILICONFLOW_API_KEY"))
+    if cloud_key:
         code, out = run_cmd([sys.executable, str(SDK_ROOT / "tools" / "transcribe_api.py"),
-                             "--src", src, "--out", str(tgt)], log_path=log)
+                             "--src", src, "--out", str(tgt),
+                             "--provider", provider or "auto"], log_path=log)
         if code == 0:
-            return "done", "转录完成（tier2·云端 ASR）"
+            return "done", f"转录完成（tier2·云端 ASR {provider or 'auto'}）"
         # API 失败不直接判死：若本地 whisper 可用则继续兜底
         try:
             import faster_whisper  # noqa: F401
@@ -260,7 +307,8 @@ def st_transcribe(ctx: dict) -> tuple[str, str]:
                          "--src", src, "--out", str(tgt)], log_path=log)
     if code != 0:
         return "error", ("转录三级均不可用：给 --transcript(srt/vtt/json)，"
-                         f"或设 SILICONFLOW_API_KEY 走云端，或装 faster-whisper+large-v3。详情：{out[-300:]}")
+                         f"或配置 TRANSCRIBE_PROVIDER / MIMO_API_KEY / SILICONFLOW_API_KEY 走云端，"
+                         f"或装 faster-whisper+large-v3。详情：{out[-300:]}")
     return "done", "转录完成（tier3·本地 whisper）"
 
 

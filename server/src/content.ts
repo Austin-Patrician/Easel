@@ -281,7 +281,7 @@ export function deletePersona(name: string): void {
   fs.rmSync(directory, { recursive: true, force: false });
 }
 
-const VALUE_OK = /^[A-Za-z0-9_.:/@+\-=~,%?#[\]()!*]*$/;
+const VALUE_OK = /^[^\x00-\x1F\x7F]*$/;
 const ENV_ALLOWED =
   /^(EASEL_|IMG_|VIDEO_|MUSIC_|VOICE_|GEMINI_|MINERU_|OPENAI_|ANTHROPIC_|OPENROUTER_|DASHSCOPE_|ARK_|VOLC_|SILICONFLOW_|XHS_|DOUYIN_|BILI_|WECHAT_|WX_|KLING_|AGNES_|FISH_|MINIMAX_|MIMO_|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)/;
 

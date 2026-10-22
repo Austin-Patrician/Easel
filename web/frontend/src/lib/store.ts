@@ -1,4 +1,4 @@
-import type { UploadedFile, ChatQuestion } from './api';
+import type { UploadedFile, ChatQuestion, ApprovalMode, ThinkingLevel } from './api';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -17,6 +17,9 @@ export interface ChatSession {
   created: number;
   sessionKey?: string;  // pi 会话标识，用于后端删除
   pendingTurnId?: string; // 进行中的可重连 job；浏览器重开后继续按 eventId 续流
+  approval?: ApprovalMode; // 审批模式：默认 manual，auto 仅自动放行 ask
+  model?: string; // 会话级模型覆盖；留空跟随全局
+  thinking?: ThinkingLevel; // 会话级思考深度覆盖；留空跟随全局
   archived?: boolean;   // 归档：从 History 主列表移到「已归档」区
 }
 

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""asr.py — 语音转字幕（ASR）的确定性封装（faster-whisper + 标准库）。
+"""asr.py — 语音转字幕（ASR）的确定性封装（faster-whisper + 云端 API + 标准库）。
 
 所有"语音/视频 → 字幕文件"类 SKILL（auto-subtitle 等）共用此脚本，避免每次
 现场即兴调 whisper 导致的模型选择、时间戳格式、中文断句不一致等问题。
 
+默认走本地 faster-whisper；配置了 TRANSCRIBE_PROVIDER 或对应 API Key 后也可走
+小米 MiMo ASR（mimo-v2.5-asr）或 SiliconFlow，云端只返回整段文本时按语速估算
+时间轴（JSON 里 approx_timeline=true）。
+
 与 video_ops.py 的边界：本脚本只负责"识别语音 → 生成字幕文件（SRT/ASS/TXT/JSON）"，
 不负责把字幕烧录进视频；烧录用 video_ops.py 或 ffmpeg subtitles/ass 滤镜。
 
-依赖：faster-whisper（`pip install faster-whisper`）+ ffmpeg（视频提取音轨）。
+依赖：faster-whisper（`pip install faster-whisper`）+ ffmpeg（视频提取音轨/大音频压缩）。
 首次运行会从 HuggingFace 下载模型，需外网代理（见下方 _ensure_proxy）。
 
 子命令（均支持 -h）：
@@ -17,19 +21,25 @@
 用法举例：
     asr.py transcribe -i talk.mp4 -o outputs/talk/talk.srt --language zh
     asr.py transcribe -i voice.mp3 --format ass --model small
+    asr.py transcribe -i voice.mp3 --provider xiaomi-mimo --language zh
     asr.py info
     asr.py --selftest
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 # ── 常量 ──────────────────────────────────────────────────────────────
 # 默认外网代理（faster-whisper 首次从 HuggingFace 下模型时用）。
@@ -38,6 +48,11 @@ _DEFAULT_PROXY = os.environ.get("EASEL_PROXY", "")  # lab 在 .env 设 EASEL_PRO
 
 _MODELS = ["tiny", "base", "small", "medium", "large-v3"]
 
+_CLOUD_PROVIDERS = ("xiaomi-mimo", "siliconflow")
+
+# 小米 MiMo ASR 限制：audio 的 base64 编码后不超过 10MB
+_MAX_UPLOAD_B64 = 10 * 1024 * 1024
+
 # 视频容器（需先用 ffmpeg 提取音轨）
 _VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".ts", ".wmv"}
 
@@ -45,12 +60,55 @@ _VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".ts", ".
 _ZH_PUNCT = "，。！？；、：,.!?;:）】》」"
 # 硬切标点（句末，优先在这里断）
 _ZH_END_PUNCT = "。！？!?…"
+_SENTENCE_BREAK = re.compile(r"(?<=[。！？!?；;…\.])\s*")
+
+_ENV_CACHE: dict[str, str] | None = None
 
 
 # ── 基础工具 ──────────────────────────────────────────────────────────
 def _die(msg: str, code: int = 1) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+def _load_env() -> dict[str, str]:
+    """读取项目 .env（进程环境变量优先），让脚本被 Agent 直接调用时也能拿到云端 key。"""
+    global _ENV_CACHE
+    if _ENV_CACHE is not None:
+        return _ENV_CACHE
+    values: dict[str, str] = {}
+    candidates: list[Path] = []
+    for base in (Path.cwd(), *Path.cwd().parents):
+        if base not in candidates:
+            candidates.append(base)
+    for base in Path(__file__).resolve().parents:
+        if base not in candidates:
+            candidates.append(base)
+    env_file = next((base / ".env" for base in candidates if (base / ".env").is_file()), None)
+    if env_file is not None:
+        try:
+            for raw in env_file.read_text(encoding="utf-8-sig").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key.startswith("export "):
+                    key = key[7:].strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                if key:
+                    values[key] = value
+        except OSError:
+            pass
+    values.update(os.environ)
+    _ENV_CACHE = values
+    return values
+
+
+def _env(name: str) -> str:
+    return str(_load_env().get(name, "")).strip()
 
 
 def _require_input(path: str) -> Path:
@@ -96,6 +154,295 @@ def _extract_audio(video: Path) -> Path:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-10:])
         _die(f"ffmpeg 提取音轨失败:\n{tail}", proc.returncode or 1)
     return tmp
+
+
+# ── 云端 ASR ──────────────────────────────────────────────────────────
+def _resolve_provider(explicit: str = "") -> str:
+    provider = (explicit or _env("TRANSCRIBE_PROVIDER") or "auto").strip().lower()
+    if provider in ("", "auto"):
+        # 只有显式配置了 ASR 模型才自动选小米，避免把 TTS 的 MIMO_API_KEY 误当 ASR 授权
+        if _env("MIMO_API_KEY") and _env("MIMO_ASR_MODEL"):
+            provider = "xiaomi-mimo"
+        elif _env("SILICONFLOW_API_KEY"):
+            provider = "siliconflow"
+        else:
+            return "local"
+    if provider in ("whisper", "faster-whisper", "faster_whisper"):
+        return "local"
+    if provider not in ("local", *_CLOUD_PROVIDERS):
+        _die(f"未知 ASR provider: {provider}（可选 auto/local/xiaomi-mimo/siliconflow）", 2)
+    if provider in _CLOUD_PROVIDERS:
+        key_name = "MIMO_API_KEY" if provider == "xiaomi-mimo" else "SILICONFLOW_API_KEY"
+        if not _env(key_name):
+            print(f"[asr] {provider} 缺少 {key_name}，回退本地 whisper。", file=sys.stderr)
+            return "local"
+    return provider
+
+
+def _cloud_model(a, env_name: str, default: str) -> str:
+    requested = str(getattr(a, "model", "") or "").strip()
+    if requested and requested not in _MODELS:
+        return requested
+    return _env(env_name) or default
+
+
+def _audio_duration(path: Path) -> float:
+    if path.suffix.lower() == ".wav":
+        try:
+            import wave
+            with wave.open(str(path), "rb") as wav:
+                rate = wav.getframerate()
+                if rate:
+                    return wav.getnframes() / rate
+        except (OSError, EOFError, ValueError):
+            pass
+    if shutil.which("ffprobe"):
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nk=1:nw=1", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        try:
+            return float(proc.stdout.strip().splitlines()[0])
+        except (ValueError, IndexError):
+            pass
+    return 0.0
+
+
+def _audio_for_upload(path: Path, max_b64: int | None = _MAX_UPLOAD_B64) -> tuple[str, bytes, str]:
+    """返回 (mime, bytes, filename)。非 mp3/wav 或超过 max_b64 时用 ffmpeg 转 16k 单声道 mp3。"""
+    mime = {".mp3": "audio/mpeg", ".wav": "audio/wav"}.get(path.suffix.lower())
+    size = path.stat().st_size
+    if mime and (max_b64 is None or size * 4 / 3 <= max_b64):
+        return mime, path.read_bytes(), path.name
+    if not _has_ffmpeg():
+        _die("音频需要转码后才能上传（非 mp3/wav 或超过大小限制），但未找到 ffmpeg；"
+             "请安装 ffmpeg 或改用 --provider local。", 3)
+    with tempfile.TemporaryDirectory(prefix="asr_cloud_") as d:
+        out = Path(d) / "upload.mp3"
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
+             "-b:a", "64k", "-f", "mp3", str(out)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if proc.returncode != 0 or not out.is_file():
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-10:])
+            _die(f"ffmpeg 压缩音频失败:\n{tail}", proc.returncode or 1)
+        data = out.read_bytes()
+        if max_b64 is not None and len(data) * 4 / 3 > max_b64:
+            _die("音频编码后 Base64 仍超过 10MB；请分段转写或改用 --provider local。", 2)
+        return "audio/mpeg", data, "upload.mp3"
+
+
+def _post_json(url: str, payload: dict, headers: dict[str, str],
+               timeout: int = 600) -> dict:
+    req = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", **headers},
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:800]
+        hint = ""
+        if exc.code == 402:
+            hint = "（账户余额不足）"
+        elif exc.code in (401, 403):
+            hint = "（请检查 API Key）"
+        _die(f"{url} 请求失败 HTTP {exc.code}{hint}: {detail}", 5)
+    except (URLError, OSError) as exc:
+        _die(f"无法连接 {url}: {exc}", 5)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        _die(f"ASR 响应不是 JSON: {raw[:500]}", 5)
+    if not isinstance(data, dict):
+        _die(f"ASR 响应格式异常: {raw[:500]}", 5)
+    return data
+
+
+def _content_text(content: object) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts).strip()
+    return ""
+
+
+def _chat_text(data: dict) -> str:
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = choice.get("message")
+        if isinstance(message, dict):
+            for key in ("content", "text", "transcript"):
+                text = _content_text(message.get(key))
+                if text:
+                    return text
+        text = _content_text(choice.get("text"))
+        if text:
+            return text
+    for key in ("text", "transcript", "result"):
+        text = _content_text(data.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _xiaomi_text(audio: Path, a) -> tuple[str, str, str]:
+    key = _env("MIMO_API_KEY")
+    if not key:
+        _die("缺少 MIMO_API_KEY（小米 MiMo ASR）；请在设置页填写或改用 --provider local。", 3)
+    base = (_env("MIMO_BASE_URL") or "https://api.xiaomimimo.com/v1").rstrip("/")
+    model = _cloud_model(a, "MIMO_ASR_MODEL", "mimo-v2.5-asr")
+    language = str(getattr(a, "language", "auto") or "auto").strip().lower()
+    if language not in ("auto", "zh", "en"):
+        language = "auto"
+    mime, raw, _ = _audio_for_upload(audio)
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "input_audio",
+                "input_audio": {
+                    "data": f"data:{mime};base64," + base64.b64encode(raw).decode("ascii"),
+                },
+            }],
+        }],
+        "asr_options": {"language": language},
+    }
+    print(f"[asr] 小米 MiMo ASR：{base}/chat/completions · model={model} · lang={language}",
+          file=sys.stderr)
+    data = _post_json(base + "/chat/completions", payload, {
+        "Authorization": f"Bearer {key}",
+        "api-key": key,
+    })
+    text = _chat_text(data)
+    if not text:
+        _die(f"小米 MiMo ASR 未返回文本: {json.dumps(data, ensure_ascii=False)[:500]}", 5)
+    return text, model, language
+
+
+def _siliconflow_text(audio: Path, a) -> tuple[str, list[dict], str, str]:
+    key = _env("SILICONFLOW_API_KEY")
+    if not key:
+        _die("缺少 SILICONFLOW_API_KEY；请在设置页填写或改用 --provider local。", 3)
+    base = (_env("SILICONFLOW_BASE_URL") or "https://api.siliconflow.cn/v1").rstrip("/")
+    model = _cloud_model(a, "SILICONFLOW_ASR_MODEL", "SenseVoiceSmall")
+    language = str(getattr(a, "language", "auto") or "auto").strip() or "auto"
+    mime, raw, filename = _audio_for_upload(audio, None)
+
+    boundary = "----EaselASR" + uuid.uuid4().hex
+    crlf = b"\r\n"
+    body = bytearray()
+    fields = {"model": model, "response_format": "verbose_json"}
+    if language != "auto":
+        fields["language"] = language
+    for name, value in fields.items():
+        body += f"--{boundary}\r\n".encode()
+        body += f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+        body += f"{value}\r\n".encode()
+    body += f"--{boundary}\r\n".encode()
+    body += (f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+             f"Content-Type: {mime}\r\n\r\n").encode()
+    body += raw + crlf
+    body += f"--{boundary}--\r\n".encode()
+
+    req = Request(base + "/audio/transcriptions", data=bytes(body), method="POST", headers={
+        "Authorization": f"Bearer {key}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    })
+    print(f"[asr] SiliconFlow ASR：{base}/audio/transcriptions · model={model} · lang={language}",
+          file=sys.stderr)
+    try:
+        with urlopen(req, timeout=600) as resp:
+            raw_text = resp.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:800]
+        hint = "（请检查 API Key）" if exc.code in (401, 403) else ""
+        _die(f"SiliconFlow ASR 请求失败 HTTP {exc.code}{hint}: {detail}", 5)
+    except (URLError, OSError) as exc:
+        _die(f"无法连接 SiliconFlow ASR: {exc}", 5)
+    try:
+        data = json.loads(raw_text)
+    except ValueError:
+        data = {"text": raw_text}
+    if not isinstance(data, dict):
+        _die(f"SiliconFlow ASR 响应格式异常: {raw_text[:500]}", 5)
+    text = str(data.get("text") or "").strip()
+    segments = data.get("segments") if isinstance(data.get("segments"), list) else []
+    if not text and not segments:
+        _die(f"SiliconFlow ASR 未返回文本: {raw_text[:500]}", 5)
+    return text, segments, model, language
+
+
+def _text_to_cues(text: str, duration: float, max_chars: int) -> list[tuple[float, float, str]]:
+    text = " ".join(text.split()).strip()
+    if not text:
+        return []
+    if duration <= 0:
+        duration = max(3.0, len(text) / 4.0)
+    parts = [part.strip() for part in _SENTENCE_BREAK.split(text) if part.strip()] or [text]
+    total = sum(len(part) for part in parts) or 1
+    cues: list[tuple[float, float, str]] = []
+    cursor = 0.0
+    for part in parts:
+        span = duration * (len(part) / total)
+        start = cursor
+        end = min(duration, cursor + span)
+        cues.extend(_split_long_segment(part, start, max(end, start + 0.05), max_chars))
+        cursor = end
+    if cues:
+        start, _, body = cues[-1]
+        cues[-1] = (start, max(duration, start + 0.05), body)
+    return cues
+
+
+def _transcribe_cloud(audio: Path, a, provider: str) -> tuple[list[tuple[float, float, str]], dict]:
+    duration = _audio_duration(audio)
+    segments: list[dict] = []
+    if provider == "xiaomi-mimo":
+        text, model, language = _xiaomi_text(audio, a)
+    else:
+        text, segments, model, language = _siliconflow_text(audio, a)
+
+    cues: list[tuple[float, float, str]] = []
+    for seg in segments:
+        body = str(seg.get("text") or "").strip()
+        if not body:
+            continue
+        try:
+            start = float(seg.get("start") or 0.0)
+            end = float(seg.get("end") or start)
+        except (TypeError, ValueError):
+            start, end = 0.0, 0.0
+        cues.extend(_split_long_segment(body, start, max(end, start + 0.05), a.max_line_chars))
+    approx = not cues
+    if not cues:
+        cues = _text_to_cues(text, duration, a.max_line_chars)
+
+    meta = {
+        "source": str(audio),
+        "provider": provider,
+        "model": model,
+        "language": language,
+        "duration_sec": round(duration, 3) if duration else None,
+        "num_segments": len(cues),
+        "approx_timeline": approx,
+    }
+    return cues, meta
 
 
 # ── 时间戳格式化 ──────────────────────────────────────────────────────
@@ -307,10 +654,12 @@ def _transcribe_audio(audio: Path, a) -> tuple[list[tuple[float, float, str]], d
 
     meta = {
         "source": str(audio),
+        "provider": "local",
         "model": a.model,
         "language": detected,
         "duration_sec": round(duration, 3) if duration else None,
         "num_segments": len(cues),
+        "approx_timeline": False,
     }
     return cues, meta
 
@@ -326,7 +675,9 @@ def cmd_transcribe(a) -> int:
             tmp_audio = _extract_audio(src)
             audio = tmp_audio
 
-        cues, meta = _transcribe_audio(audio, a)
+        provider = _resolve_provider(getattr(a, "provider", ""))
+        cues, meta = (_transcribe_audio(audio, a) if provider == "local"
+                      else _transcribe_cloud(audio, a, provider))
         if not cues:
             print("[asr] 警告：未识别到任何语音内容（可能是静音或纯音乐）。",
                   file=sys.stderr)
@@ -362,7 +713,7 @@ def cmd_transcribe(a) -> int:
             out = _prep_out(f"outputs/{src.stem}/{src.stem}.{fmt}")
         out.write_text(content, encoding="utf-8")
         kb = out.stat().st_size / 1024
-        print(f"✅ {out} ({kb:.1f} KB, {len(cues)} 条字幕, 语言={meta['language']})")
+        print(f"[asr] 完成：{out} ({kb:.1f} KB, {len(cues)} 条字幕, 语言={meta['language']})")
         return 0
     finally:
         if tmp_audio is not None:
@@ -374,6 +725,12 @@ def cmd_info(a) -> int:
     for m in _MODELS:
         tag = "（默认）" if m == "base" else ""
         print(f"  - {m}{tag}")
+    print("\n云端 ASR（--provider）：")
+    print("  - auto          按 .env 自动选择（小米 MiMo → SiliconFlow → 本地）")
+    print("  - xiaomi-mimo   小米 MiMo ASR（MIMO_API_KEY / MIMO_ASR_MODEL）")
+    print("  - siliconflow   SiliconFlow（SILICONFLOW_API_KEY / SILICONFLOW_ASR_MODEL）")
+    print("  - local         faster-whisper（默认）")
+    print(f"  当前：{_resolve_provider(getattr(a, 'provider', ''))}")
     print("\n语言（--language）：")
     print("  - auto  自动检测（默认）")
     print("  - zh    中文 / en 英文 / ja 日文 / ko 韩文 ...（ISO 639-1 码）")
@@ -411,7 +768,7 @@ def _selftest() -> int:
         ns = argparse.Namespace(
             input=str(mp3), output=str(srt), format="srt",
             model="base", language="zh", device="cpu", compute_type="int8",
-            max_line_chars=18, beam_size=5,
+            max_line_chars=18, beam_size=5, provider="local",
         )
         print("[selftest] transcribe → srt……")
         rc = cmd_transcribe(ns)
@@ -438,7 +795,9 @@ def _add_transcribe_args(p) -> None:
     p.add_argument("--format", choices=["srt", "ass", "txt", "json"],
                    default="srt", help="输出格式（默认 srt）")
     p.add_argument("--model", default="base",
-                   help=f"模型 {'/'.join(_MODELS)}（默认 base）")
+                   help=f"本地模型 {'/'.join(_MODELS)}（默认 base）；云端可填 MiMo/SiliconFlow 模型名")
+    p.add_argument("--provider", choices=["auto", "local", "xiaomi-mimo", "siliconflow"],
+                   default="", help="ASR 通道（默认读 .env 的 TRANSCRIBE_PROVIDER，否则 auto）")
     p.add_argument("--language", default="auto",
                    help="语言码如 zh/en，默认 auto 自动检测")
     p.add_argument("--device", default="cpu", help="cpu / cuda（默认 cpu）")

@@ -6,6 +6,7 @@ import {
 } from '../lib/api';
 import type { AccountItem, AccountWhoami } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
+import PlatformIcon from './PlatformIcon';
 
 type QRState = {
   platform: string;
@@ -414,7 +415,10 @@ export default function AccountsPage() {
           return (
             <div key={a.platform} className="card account-card" style={{ opacity: a.supported ? 1 : 0.6 }}>
               <div className="account-card-head">
-                <span className="account-card-name">{a.name}</span>
+                <div className="account-card-title">
+                  <PlatformIcon platform={a.platform} />
+                  <span className="account-card-name">{a.name}</span>
+                </div>
                 {badge(a)}
               </div>
 

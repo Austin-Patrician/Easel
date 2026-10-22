@@ -17,12 +17,13 @@ import {
   writeBinding,
   scrubSecrets,
   type Sandbox,
+  type ThinkingLevel,
 } from "../config.js";
 import { chatTurnMessage } from "../persona.js";
-import { createModelRuntime, resolveConfiguredModel } from "./models.js";
+import { applyBuiltinCapabilities, createModelRuntime, resolveConfiguredModel } from "./models.js";
 import { createResourceLoader } from "./prompt.js";
 import { createEaselUI } from "./ui.js";
-import { cancelSessionQuestions, registerTurn, unregisterTurn, type EventSink } from "./host.js";
+import { cancelSessionQuestions, registerTurn, unregisterTurn, type ApprovalMode, type EventSink } from "./host.js";
 
 export interface AttachmentRef {
   id: string;
@@ -36,7 +37,9 @@ export interface ChatTurnRequest {
   persona?: string;
   attachments?: AttachmentRef[];
   model?: string;
+  thinkingLevel?: ThinkingLevel;
   sandbox?: Sandbox;
+  approval?: ApprovalMode;
   turnId: string;
   emit: EventSink;
 }
@@ -189,6 +192,8 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
   return serialize(sessionKey, async () => {
     const config = harnessSettings();
     const sandbox = request.sandbox ?? config.sandbox;
+    const approval: ApprovalMode = request.approval === "auto" ? "auto" : "manual";
+    const thinkingLevel: ThinkingLevel | undefined = request.thinkingLevel ?? (config.thinking || undefined);
     let session: AgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
     const output: string[] = [];
@@ -207,7 +212,8 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
         : SessionManager.create(PROJECT_ROOT, PI_SESSION_DIR);
       const modelRuntime = await createModelRuntime();
       const configured = (request.model ?? config.models.pi ?? "").trim();
-      const model = resolveConfiguredModel(modelRuntime, configured);
+      const resolved = resolveConfiguredModel(modelRuntime, configured);
+      const model = resolved ? applyBuiltinCapabilities(resolved) : undefined;
       if (configured && !model) {
         throw new Error(`找不到 pi 模型「${configured}」。请检查模型标识或 pi 的 models.json。`);
       }
@@ -226,6 +232,7 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
         agentDir: PI_AGENT_DIR,
         modelRuntime,
         model,
+        thinkingLevel,
         resourceLoader: loader,
         sessionManager,
         settingsManager,
@@ -240,7 +247,7 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
       const sessionId = session.sessionId;
       if (!binding) writeBinding(sessionKey, session.sessionFile ?? "");
 
-      registerTurn({ sessionId, sessionKey, sandbox, emit: capture });
+      registerTurn({ sessionId, sessionKey, sandbox, approval, emit: capture });
       unsubscribe = bindSessionEvents(session, capture);
 
       await session.bindExtensions({

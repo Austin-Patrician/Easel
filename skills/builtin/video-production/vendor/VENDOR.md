@@ -38,9 +38,9 @@
 
 | 文件 | 改动 |
 |------|------|
-| `pipeline/run.py` `st_transcribe()` | **三级转录降级**。上游只有本地 whisper 一条路，且把 `.srt` 当纯文本塞进 `{"text": …}`、时间轴整个丢掉。改为：tier1 现成稿（`.json` 直接用，`.srt`/`.vtt` 转段级 transcript）→ tier2 云端 ASR（配了 `SILICONFLOW_API_KEY` 才走）→ tier3 本地 whisper 兜底 |
+| `pipeline/run.py` `st_transcribe()` | **三级转录降级**。上游只有本地 whisper 一条路，且把 `.srt` 当纯文本塞进 `{"text": …}`、时间轴整个丢掉。改为：tier1 现成稿（`.json` 直接用，`.srt`/`.vtt` 转段级 transcript）→ tier2 云端 ASR（`TRANSCRIBE_PROVIDER` 选小米 MiMo / 硅基流动，配了对应 key 才走）→ tier3 本地 whisper 兜底 |
 | [tools/srt_to_transcript.py](video-pipeline-sdk/tools/srt_to_transcript.py) | 新增。字幕 → 段级 `transcript.json`（`start`/`end`/`text`），tier1 用 |
-| [tools/transcribe_api.py](video-pipeline-sdk/tools/transcribe_api.py) | 新增。云端 ASR 调用，tier2 用。**key 只从环境变量读**，不落配置文件 |
+| [tools/transcribe_api.py](video-pipeline-sdk/tools/transcribe_api.py) | 新增。云端 ASR 调用，tier2 用，支持小米 MiMo ASR / 硅基流动。**key 只从环境变量或 .env 读**，不落代码/命令 |
 | [tools/render_slideshow.py](video-pipeline-sdk/tools/render_slideshow.py) | 新增。图片分镜 + TTS 配音这类「非真人出镜」素材的渲染路径（上游假设的是真人出镜，人脸安全区/proxy 那套对幻灯片式素材不适用） |
 | `deps/bootstrap.sh` | 新增。Linux 依赖还原脚本（上游 `DEPS.md` 明列为待补）。装 `deps/remotion/` 的 npm 依赖，走 `--ignore-scripts` |
 

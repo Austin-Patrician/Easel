@@ -43,6 +43,11 @@ MIMO_API_KEY=<你的key>
 MIMO_TTS_MODEL=mimo-v2.5-tts
 MIMO_TTS_VOICE=冰糖               # 可选：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
 MIMO_STYLE_PROMPT=像同事在白板前讲清楚一件事：结论先行，句尾自然落下，不要播音腔。
+# C2) 固定自定义音色（voicedesign 生成参考样本 → voiceclone；换视频只换风格）
+MIMO_TTS_MODEL=mimo-v2.5-tts-voiceclone
+MIMO_VOICE_PROFILE=voices/tech-male-m2
+MIMO_TTS_VOICE=
+MIMO_STYLE_PROMPT=像刚开完会的科技博主，和同事面对面讲清楚一件事。语速正常偏快，句尾收住，不要播音腔。
 ```
 
 - `lines.json` 每行的 `emotion`（愤怒/崩溃大哭/冷笑/温柔…）→ 引擎按 provider 自动转成情感参数驱动演绎；写具体越贴戏越好。

@@ -112,7 +112,7 @@
 | `subtitle-translate` | 字幕翻译 / 双语字幕：把已有字幕（SRT/VTT/ASS）翻译成目标语言，生成双语（原文+译文）或纯译文字幕，并可软挂载 / 硬烧录进视频。 |
 | `text-condenser` | 字数裁剪/摘要：把长文本压缩到指定字数，保留核心信息。支持硬裁剪（严格字数）、 摘要（保留要点）、金句提取（只保留最精华的句子）三种模式。 特别适合从长文生成平台适配的短文。 |
 | `text-polisher` | 文本润色打磨：七轮聚焦扫描（清晰度/语气/价值感/证据/具体性/情感/风险） + 去 AI 感改写（砍填充短语、打破公式化结构、主动语态、变化节奏）。 |
-| `tts-voiceover` | 文字转语音配音：把文案/脚本合成为 AI 语音口播、旁白、朗读音频。配了 VOICE_PROVIDER 默认走闭源云 TTS（CosyVoice2 / 小米 MiMo 等，有情感、像真人），edge 仅无 key 时兜底（edge 偏机械/AI 味）；MiMo 支持 MIMO_STYLE_PROMPT 导演提示并按整段/语义块合成，其它 provider 按句合成；同步输出分句 SRT 字幕、mp3/wav/m4a。 |
+| `tts-voiceover` | 文字转语音配音：把文案/脚本合成为 AI 语音口播、旁白、朗读音频。配了 VOICE_PROVIDER 默认走闭源云 TTS（CosyVoice2 / 小米 MiMo 等，有情感、像真人），edge 仅无 key 时兜底（edge 偏机械/AI 味）；MiMo 支持 MIMO_STYLE_PROMPT 导演提示、MIMO_VOICE_PROFILE 固定音色（voicedesign 参考 + voiceclone）并按整段/语义块合成，其它 provider 按句合成；同步输出分句 SRT 字幕、mp3/wav/m4a。 |
 | `video-chapters` | 视频章节 / 时间戳目录：给中长视频自动生成章节划分和时间戳目录，用于 B站分P/YouTube 章节/视频描述区，方便观众跳转、提升完播。 |
 | `video-editing` | 用自然语言指令剪辑视频：裁剪、拼接、变速、跳切去静音、文字覆盖、横竖比转换、抽帧封面、转 GIF、压缩、加 BGM/水印。 |
 | `video-highlights` | 长视频 / 直播录像高光切片：从一条长视频里找出高光片段，切成多条独立短视频，可选转竖版 9:16 + 加字幕。找点两种方式——音频能量峰值（情绪高涨/欢呼/大声处）或转录后由内容判断挑金句段。 |

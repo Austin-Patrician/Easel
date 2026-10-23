@@ -13,8 +13,9 @@ layer: produce
 有情感、像真人），**没 key 才退 edge**（AI 味、生硬，仅兜底）。
 `--engine closed/edge` 可强制；闭源音色用 `--voice` 传 voice-id（如 `FunAudioLLM/CosyVoice2-0.5B:alex`），
 旁白默认 alex，可用 `VOICE_NARRATOR_VOICE_ID` 覆盖。小米 MiMo 用 `MIMO_API_KEY` + `MIMO_TTS_VOICE`（默认 `mimo_default`），
-还会把 `MIMO_STYLE_PROMPT` 作为导演指令传给模型；MiMo 按整段/语义块合成（不再逐句重新起调），
-字幕仍按句比例估时。其它 provider 仍按句合成+拼接+分句 SRT。合成后语音可交 `audio_ops.py`/`video_ops.py` 混音或加到视频。
+固定自定义音色用 `MIMO_VOICE_PROFILE`（voicedesign 参考 + voiceclone），还会把 `MIMO_STYLE_PROMPT` 或 `--style`
+作为导演指令传给模型；MiMo 按整段/语义块合成（不再逐句重新起调），字幕仍按句比例估时。
+其它 provider 仍按句合成+拼接+分句 SRT。合成后语音可交 `audio_ops.py`/`video_ops.py` 混音或加到视频。
 
 ## 输入
 
@@ -58,6 +59,25 @@ MiMo 音色：`mimo_default` / `冰糖` / `茉莉` / `苏打` / `白桦` / `Mia`
 ```bash
 MIMO_STYLE_PROMPT=像同事在会议室白板前讲清楚一件事：结论先行，语速正常偏慢，判断句和数字前后留半拍，句尾自然落下，不要播音腔。
 ```
+
+**固定音色 + 每条视频换风格**：内置音色不够用时，先用 `mimo-v2.5-tts-voicedesign` 生成一次参考音色，存到 `voices/<name>/reference.mp3`，之后统一用 `mimo-v2.5-tts-voiceclone`。这样音色锁死，每条视频只改 `MIMO_STYLE_PROMPT` 或 `--style`：
+
+```bash
+# .env
+MIMO_TTS_MODEL=mimo-v2.5-tts-voiceclone
+MIMO_VOICE_PROFILE=voices/tech-male-m2
+MIMO_TTS_VOICE=
+MIMO_STYLE_PROMPT=像刚开完会的科技博主，和同事面对面讲清楚一件事。语速正常偏快，句与句之间自然换气，句尾收住，不要播音腔，不要广告腔。
+
+# 单条视频临时换讲述感觉（音色不变）
+python skills/shared/scripts/tts.py speak --file script.txt \
+  -o outputs/主题名/vo.mp3 --subtitle outputs/主题名/vo.srt \
+  --style "冷静拆解：像工程师复盘故障，判断句前后留半拍，句尾收住。"
+```
+
+`voices/<name>/voice.json` 可写 `design_prompt` / `reference` / `default_style`；没有 `MIMO_STYLE_PROMPT` 时用 `default_style`。`MIMO_VOICE_SAMPLE` 可直接指定 voiceclone 参考音频，优先级低于 `--sample`、高于 profile 的 `reference`。
+
+voiceclone 会继承参考样本的语速。实测 M2 参考样本约 5 字/秒，正式口播若偏快，加 `--rate=-10%` 把它拉回约 4.4 字/秒（PowerShell 用等号写法，避免 `-10%` 被当成参数）。
 
 ### 1. 合成配音 speak
 

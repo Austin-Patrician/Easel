@@ -42,6 +42,8 @@ dashscope·gemini·openai 自然语言指令；SiliconFlow CosyVoice2 用内联 
      MIMO_API_KEY=<你的 key>
      MIMO_TTS_MODEL=mimo-v2.5-tts        # 预置音色；另支持 voicedesign / voiceclone
      MIMO_TTS_VOICE=冰糖                  # 可选：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
+     MIMO_VOICE_PROFILE=voices/tech-male-m2  # 固定音色 profile（voice.json + reference.mp3）
+     MIMO_VOICE_SAMPLE=path/to/ref.mp3        # 或直接指定 voiceclone 参考音频
      MIMO_STYLE_PROMPT=像同事在会议室白板前讲清楚一件事，结论先行、克制、口语化。
 
 子命令：
@@ -196,16 +198,21 @@ def instruct_text(emotion_cn: str | None) -> str:
     return f"用{e}的语气说"
 
 
-def mimo_instruction(emotion_cn: str | None, speed: float = 1.0) -> str:
+def mimo_instruction(
+    emotion_cn: str | None,
+    speed: float = 1.0,
+    style: str | None = None,
+) -> str:
     """MiMo TTS 的导演指令：固定风格 + 逐行情绪 + 语速。
 
     MIMO_STYLE_PROMPT 是整段音色的“导演提示”，放在 user message，不会被朗读。
     逐行 emotion 追加为一句具体情绪，避免把十几种情绪压成一个泛化的「用X的语气说」。
+    style 显式传入时优先于 MIMO_STYLE_PROMPT（用于 voice profile 的默认风格）。
     """
     parts: list[str] = []
-    style = env_lookup("MIMO_STYLE_PROMPT")
-    if style:
-        parts.append(style)
+    style_text = style if style is not None else env_lookup("MIMO_STYLE_PROMPT")
+    if style_text:
+        parts.append(style_text)
     emotion = (emotion_cn or "").strip()
     if emotion:
         parts.append(f"这一句的情绪是「{emotion}」，按这个情绪演，但不要夸张。")
@@ -533,6 +540,31 @@ def _chat_audio_data(resp: dict[str, Any]) -> str:
     return value.split(",", 1)[-1] if value.startswith("data:") else value
 
 
+def _load_mimo_profile(profile_ref: str | None) -> dict[str, Any]:
+    """读取 MiMo 音色 profile（目录或 voice.json）。"""
+    ref = (profile_ref or "").strip()
+    if not ref:
+        return {}
+    path = Path(ref).expanduser()
+    if path.is_dir():
+        path = path / "voice.json"
+    if not path.is_file():
+        fail(f"MiMo 音色 profile 不存在：{path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        fail(f"无法读取 MiMo 音色 profile：{path}（{exc}）")
+    if not isinstance(data, dict):
+        fail(f"MiMo 音色 profile 必须是 JSON 对象：{path}")
+    reference = str(data.get("reference") or "").strip()
+    if reference:
+        sample = Path(reference).expanduser()
+        if not sample.is_absolute():
+            sample = path.parent / sample
+        data["reference"] = str(sample)
+    return data
+
+
 def clone_xiaomi(a, out: Path) -> Path:
     """小米 MiMo TTS。
 
@@ -544,33 +576,68 @@ def clone_xiaomi(a, out: Path) -> Path:
     key = require_env("MIMO_API_KEY")
     base = (os.environ.get("MIMO_BASE_URL", "").strip()
             or "https://api.xiaomimimo.com/v1").rstrip("/")
-    model = a.model or os.environ.get("MIMO_TTS_MODEL", "").strip() or "mimo-v2.5-tts"
+    profile = _load_mimo_profile(
+        getattr(a, "voice_profile", None) or env_lookup("MIMO_VOICE_PROFILE")
+    )
+    model = (
+        getattr(a, "model", None)
+        or str(profile.get("model") or "").strip()
+        or env_lookup("MIMO_TTS_MODEL")
+        or "mimo-v2.5-tts"
+    )
     fmt = out.suffix.lstrip(".").lower() or "mp3"
     if fmt not in {"mp3", "wav"}:
         fail(f"xiaomi-mimo 仅支持 mp3/wav 输出，收到 .{fmt}；请先输出 mp3 再用 ffmpeg 转码。")
 
-    voice = (a.voice_id or os.environ.get("MIMO_TTS_VOICE", "").strip() or "mimo_default").strip()
-    instruction = mimo_instruction(getattr(a, "emotion", None), float(getattr(a, "speed", 1.0) or 1.0))
+    voice_arg = (getattr(a, "voice_id", None) or "").strip()
+    if voice_arg == "mimo_default" and str(profile.get("design_prompt") or "").strip():
+        voice_arg = ""
+    design = (
+        voice_arg
+        or str(profile.get("design_prompt") or "").strip()
+        or env_lookup("MIMO_TTS_VOICE")
+    ).strip()
+    voice = design or "mimo_default"
+    style = (
+        (getattr(a, "style", None) or "").strip()
+        or env_lookup("MIMO_STYLE_PROMPT")
+        or str(profile.get("default_style") or "").strip()
+        or None
+    )
+    instruction = mimo_instruction(
+        getattr(a, "emotion", None),
+        float(getattr(a, "speed", 1.0) or 1.0),
+        style=style,
+    )
 
     audio: dict[str, Any] = {"format": fmt}
     if model.endswith("-voiceclone"):
-        sample = (getattr(a, "sample", None) or "").strip()
+        sample = (
+            getattr(a, "sample", None)
+            or env_lookup("MIMO_VOICE_SAMPLE")
+            or str(profile.get("reference") or "")
+        ).strip()
         if sample:
             sample_path = Path(sample).expanduser()
             if not sample_path.is_file():
-                fail(f"--sample 文件不存在：{sample_path}")
+                fail(f"MiMo voiceclone 参考音频不存在：{sample_path}")
             suffix = sample_path.suffix.lower()
             mime = {".mp3": "audio/mpeg", ".wav": "audio/wav"}.get(suffix)
             if not mime:
-                fail("xiaomi-mimo voiceclone 的样本仅支持 mp3 / wav。")
+                fail("xiaomi-mimo voiceclone 的参考音频仅支持 mp3 / wav。")
             voice = f"data:{mime};base64,{base64.b64encode(sample_path.read_bytes()).decode()}"
         elif not voice.startswith("data:"):
-            fail("mimo-v2.5-tts-voiceclone 需 --sample 样本文件，或 --voice-id 传入 data:audio/...;base64,...")
+            fail(
+                "mimo-v2.5-tts-voiceclone 需 --sample、MIMO_VOICE_SAMPLE 或 "
+                "MIMO_VOICE_PROFILE 的 reference；也可用 --voice-id 传 data:audio/...;base64,..."
+            )
         audio["voice"] = voice
     elif model.endswith("-voicedesign"):
-        design = (a.voice_id or os.environ.get("MIMO_TTS_VOICE", "").strip() or "").strip()
         if not design or design == "mimo_default":
-            fail("mimo-v2.5-tts-voicedesign 需用 --voice-id 或 MIMO_TTS_VOICE 传入音色描述文本。")
+            fail(
+                "mimo-v2.5-tts-voicedesign 需用 --voice-id、MIMO_VOICE_PROFILE 的 "
+                "design_prompt 或 MIMO_TTS_VOICE 传入音色描述文本。"
+            )
         instruction = f"{design}；{instruction}" if instruction else design
     else:
         audio["voice"] = voice
@@ -746,6 +813,8 @@ def build_parser() -> argparse.ArgumentParser:
     pcl = sub.add_parser("clone", parents=[common], help="用音色合成语音")
     pcl.add_argument("--text", help="待合成文案")
     pcl.add_argument("--voice-id", help="已登记的音色 id / 参考模型 id / 预置 voice 名")
+    pcl.add_argument("--voice-profile", help="MiMo 音色 profile 目录或 voice.json（也可用 MIMO_VOICE_PROFILE）")
+    pcl.add_argument("--style", help="MiMo 风格指令；覆盖 MIMO_STYLE_PROMPT 与 profile 默认风格")
     pcl.add_argument("--emotion", help="逐行情绪（中文，如 愤怒/崩溃大哭/冷笑/温柔）→ 各 provider 情感通道")
     pcl.add_argument("--sample", help="参考音频（fish-audio 内联参考）")
     pcl.add_argument("--sample-text", help="参考音频对应文字（fish-audio 可选）")
@@ -759,6 +828,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError):
+            pass
     ap = build_parser()
     a = ap.parse_args()
     if not getattr(a, "func", None):

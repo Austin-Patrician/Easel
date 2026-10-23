@@ -1,0 +1,9 @@
+{
+  "name": "tech-male-m2",
+  "provider": "xiaomi-mimo",
+  "model": "mimo-v2.5-tts-voiceclone",
+  "design_prompt": "二十八岁左右的男性技术博主，声音清亮、偏薄，语速偏快，像在工位边给同事讲原理。说标准普通话，咬字清楚但不字正腔圆，句尾自然收住，不喊口号。",
+  "reference": "reference.mp3",
+  "default_style": "像刚开完会的科技博主，和同事面对面讲清楚一件事。语速正常偏快，句与句之间自然换气，句尾收住，不要播音腔，不要广告腔。",
+  "notes": "M2 male voice. Voicedesign reference, then voiceclone for stable timbre across videos; change delivery per video with MIMO_STYLE_PROMPT or tts.py --style."
+}

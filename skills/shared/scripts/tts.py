@@ -381,6 +381,7 @@ def _run_closed_mimo(
     subtitle: Path | None,
     voice: str | None,
     rate: str | None = None,
+    style: str | None = None,
 ) -> None:
     """MiMo 专用：整段/按语义块合成，避免逐句重新起调；字幕按句比例估时。"""
     provider = _closed_provider()
@@ -397,6 +398,10 @@ def _run_closed_mimo(
             "MiMo 长文本分段后需 ffmpeg 拼接；请缩短文本或安装 ffmpeg，或改用 --engine edge。"
         )
     speed = _rate_to_speed(rate)
+    sub_env = os.environ.copy()
+    sub_env["PYTHONIOENCODING"] = "utf-8"
+    if style is not None and style.strip():
+        sub_env["MIMO_STYLE_PROMPT"] = style.strip()
     with tempfile.TemporaryDirectory() as d:
         parts: list[Path] = []
         for i, chunk in enumerate(chunks):
@@ -408,7 +413,7 @@ def _run_closed_mimo(
             if abs(speed - 1.0) > 0.001:
                 cmd += ["--speed", f"{speed:.3f}"]
             r = subprocess.run(cmd, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace")
+                               encoding="utf-8", errors="replace", env=sub_env)
             if r.returncode != 0 or not pm.is_file() or pm.stat().st_size == 0:
                 raise ClosedTTSError((r.stderr or r.stdout or "voice_clone 无输出").strip()[-300:])
             parts.append(pm)
@@ -444,16 +449,19 @@ def _run_closed(
     subtitle: Path | None,
     voice: str | None,
     rate: str | None = None,
+    style: str | None = None,
 ) -> None:
     """闭源云 TTS 口播：按句 voice_clone 合成 → 拼接 → 按各句真实时长写分句 SRT。失败抛 ClosedTTSError。"""
     provider = _closed_provider()
     if not provider:
         raise ClosedTTSError("未配置 VOICE_PROVIDER")
     if provider == "xiaomi-mimo":
-        _run_closed_mimo(text, out, fmt, subtitle, voice, rate)
+        _run_closed_mimo(text, out, fmt, subtitle, voice, rate, style)
         return
     vc = Path(__file__).resolve().parent / "voice_clone.py"
     vid = _closed_voice_id(voice)
+    sub_env = os.environ.copy()
+    sub_env["PYTHONIOENCODING"] = "utf-8"
     sents = _split_sentences(text) or [text.strip()]
     with tempfile.TemporaryDirectory() as d:
         parts: list[Path] = []
@@ -464,7 +472,7 @@ def _run_closed(
             if vid:
                 cmd += ["--voice-id", vid]
             r = subprocess.run(cmd, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace")
+                               encoding="utf-8", errors="replace", env=sub_env)
             if r.returncode != 0 or not pm.is_file() or pm.stat().st_size == 0:
                 raise ClosedTTSError((r.stderr or r.stdout or "voice_clone 无输出").strip()[-300:])
             parts.append(pm)
@@ -504,7 +512,10 @@ def cmd_speak(args) -> int:
     use_closed = engine == "closed" or (engine == "auto" and _closed_provider())
     if use_closed:
         try:
-            _run_closed(text, out, fmt, subtitle, args.voice, getattr(args, "rate", None))
+            _run_closed(
+                text, out, fmt, subtitle, args.voice,
+                getattr(args, "rate", None), getattr(args, "style", None),
+            )
             dur = _probe_duration(out)
             dur_str = f"{dur:.1f}s" if dur >= 0 else "时长未知(无 ffprobe)"
             print(f"✅ {out}  ({out.stat().st_size/1024:.0f} KB, {dur_str}, 闭源 {_closed_provider()})")
@@ -625,6 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--engine", choices=["auto", "closed", "edge"], default="auto",
                    help="配音引擎：auto=配了 VOICE_PROVIDER 走闭源(好嗓子)否则 edge；closed=强制闭源；edge=强制 edge(AI 味)")
     p.add_argument("--rate", help="语速，如 +10%% / -20%%")
+    p.add_argument("--style", help="MiMo 风格指令；覆盖 MIMO_STYLE_PROMPT，不影响固定音色")
     p.add_argument("--volume", help="音量，如 +20%% / -10%%")
     p.add_argument("--pitch", help="音调，如 +2Hz / -5Hz")
     p.add_argument("--subtitle", help="同时输出 SRT 字幕到此路径")
@@ -644,6 +656,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError):
+            pass
     # 加载 .env（VOICE_PROVIDER/VOICE_API_KEY 等常只写在 .env）——否则 auto 看不到闭源配置、误退 edge。
     try:
         import ai_video

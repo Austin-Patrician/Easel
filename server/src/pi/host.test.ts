@@ -30,13 +30,15 @@ test("ask_user emits a question card and resolves the submitted answers", async 
   const pending = ask("ask-session", [{
     questionId: "confirm",
     question: "继续吗？",
+    detail: "line 1\nline 2",
     options: [{ label: "继续" }, { label: "取消" }],
   }], 5);
 
   const question = events.find((item) => item.kind === "question");
   assert.ok(question?.extra);
-  const payload = question.extra as { id: string };
+  const payload = question.extra as { id: string; questions: Array<{ detail?: string }> };
   assert.ok(payload.id.startsWith("ask_"));
+  assert.equal(payload.questions[0]?.detail, "line 1\nline 2");
   assert.equal(answerQuestion(payload.id, { confirm: ["继续"] }).ok, true);
   assert.deepEqual(await pending, { confirm: ["继续"] });
   unregisterTurn("ask-session");
@@ -56,17 +58,28 @@ test("read-only bash accepts simple inspection but rejects command chaining", as
   assert.equal((await permission("read-only-session", {
     toolName: "bash", input: { command: "find . -delete" }, cwd: process.cwd(),
   })).action, "deny");
+  assert.equal((await permission("read-only-session", {
+    toolName: "web_search", input: { query: "test" }, cwd: process.cwd(),
+  })).action, "allow");
+  assert.equal((await permission("read-only-session", {
+    toolName: "web_extract", input: { urls: ["https://example.com"] }, cwd: process.cwd(),
+  })).action, "allow");
   unregisterTurn("read-only-session");
 });
 
 test("workspace-write asks before recursive deletes and outside-workspace writes", async () => {
   register("write-session");
-  assert.equal((await permission("write-session", {
+  const commandAsk = await permission("write-session", {
     toolName: "bash", input: { command: "rm -rf ~/project-copy" }, cwd: process.cwd(),
-  })).action, "ask");
-  assert.equal((await permission("write-session", {
+  });
+  assert.equal(commandAsk.action, "ask");
+  assert.equal(commandAsk.title, "允许执行此命令？");
+  assert.equal(commandAsk.detail, "rm -rf ~/project-copy");
+  const pathAsk = await permission("write-session", {
     toolName: "write", input: { path: "/tmp/outside.txt" }, cwd: process.cwd(),
-  })).action, "ask");
+  });
+  assert.equal(pathAsk.action, "ask");
+  assert.equal(pathAsk.detail, "/tmp/outside.txt");
   assert.equal((await permission("write-session", {
     toolName: "write", input: { path: "outputs/note.txt" }, cwd: process.cwd(),
   })).action, "allow");

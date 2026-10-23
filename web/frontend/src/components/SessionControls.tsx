@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchHarnessModels, fetchHarnessSettings } from '../lib/api';
 import type { HarnessModel, HarnessSettingsResponse, ThinkingLevel } from '../lib/api';
+import { providerIconFor } from '../lib/providerIcons';
+import type { ProviderIconModel } from '../lib/providerIcons';
 import { IconCheck, IconChevron } from './icons';
 
 const LEVEL_LABELS: Record<ThinkingLevel, string> = {
@@ -17,6 +19,19 @@ type OpenMenu = 'model' | 'thinking' | null;
 
 function shortModelLabel(label: string): string {
   return label.split(' · ')[0] || label;
+}
+
+function ModelIcon({ model, reserve = false }: {
+  model?: ProviderIconModel | string | null;
+  reserve?: boolean;
+}) {
+  const icon = providerIconFor(model);
+  if (!icon && !reserve) return null;
+  return (
+    <span className={`composer-session-icon${icon?.mono ? ' is-mono' : ''}`} aria-hidden="true">
+      {icon && <img src={icon.src} alt="" draggable={false} />}
+    </span>
+  );
 }
 
 export default function SessionControls({
@@ -81,10 +96,13 @@ export default function SessionControls({
   const globalModelLabel = globalInfo ? shortModelLabel(globalInfo.label) : globalModel || 'pi 默认';
   const modelLabel = model
     ? shortModelLabel(catalogs.find((item) => item.id === model)?.label || model)
-    : `全局 · ${globalModelLabel}`;
+    : globalModelLabel;
   const thinkingLabel = thinking
     ? LEVEL_LABELS[thinking]
-    : `全局 · ${globalThinking ? LEVEL_LABELS[globalThinking] : '默认'}`;
+    : (globalThinking ? LEVEL_LABELS[globalThinking] : '默认');
+  const activeIconModel = model
+    ? (catalogs.find((item) => item.id === model) || model)
+    : (globalInfo || globalModel);
   const availableLevels = (effectiveInfo?.thinkingLevels?.length ? effectiveInfo.thinkingLevels : LEVELS)
     .filter((level, index, list) => list.indexOf(level) === index);
   const thinkingOptions = thinking && !availableLevels.includes(thinking)
@@ -107,7 +125,7 @@ export default function SessionControls({
           aria-haspopup="menu" aria-expanded={open === 'model'}
           onClick={() => setOpen((value) => (value === 'model' ? null : 'model'))}
           title={`会话模型：${model ? modelLabel : `跟随全局（${globalModelLabel}）`}`}>
-          <span className="composer-session-key">模型</span>
+          <ModelIcon model={activeIconModel} />
           <span className="composer-session-value">{modelLabel}</span>
           <IconChevron size={13} />
         </button>
@@ -117,7 +135,10 @@ export default function SessionControls({
               aria-checked={!model} onClick={() => chooseModel('')}>
               <span className="composer-session-check">{!model && <IconCheck size={13} />}</span>
               <span className="composer-session-item-text">
-                <strong>跟随全局</strong>
+                <span className="composer-session-model">
+                  <ModelIcon model={globalInfo || globalModel} reserve />
+                  <strong>跟随全局</strong>
+                </span>
                 <small>{globalModelLabel}</small>
               </span>
             </button>
@@ -127,7 +148,10 @@ export default function SessionControls({
                 aria-checked onClick={() => chooseModel(model)}>
                 <span className="composer-session-check"><IconCheck size={13} /></span>
                 <span className="composer-session-item-text">
-                  <strong>{model}</strong>
+                  <span className="composer-session-model">
+                    <ModelIcon model={model} reserve />
+                    <strong>{model}</strong>
+                  </span>
                   <small>当前 / 自定义</small>
                 </span>
               </button>
@@ -137,7 +161,10 @@ export default function SessionControls({
                 aria-checked={model === item.id} onClick={() => chooseModel(item.id)}>
                 <span className="composer-session-check">{model === item.id && <IconCheck size={13} />}</span>
                 <span className="composer-session-item-text">
-                  <strong>{shortModelLabel(item.label)}</strong>
+                  <span className="composer-session-model">
+                    <ModelIcon model={item} reserve />
+                    <strong>{shortModelLabel(item.label)}</strong>
+                  </span>
                   <small>{item.provider}</small>
                 </span>
               </button>
@@ -154,7 +181,6 @@ export default function SessionControls({
           aria-haspopup="menu" aria-expanded={open === 'thinking'}
           onClick={() => setOpen((value) => (value === 'thinking' ? null : 'thinking'))}
           title={`会话思考深度：${thinking ? thinkingLabel : `跟随全局（${globalThinking ? LEVEL_LABELS[globalThinking] : '默认'}）`}`}>
-          <span className="composer-session-key">思考</span>
           <span className="composer-session-value">{thinkingLabel}</span>
           <IconChevron size={13} />
         </button>

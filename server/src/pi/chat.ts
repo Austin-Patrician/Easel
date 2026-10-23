@@ -40,8 +40,15 @@ export interface ChatTurnRequest {
   thinkingLevel?: ThinkingLevel;
   sandbox?: Sandbox;
   approval?: ApprovalMode;
+  voiceStyle?: string;
   turnId: string;
   emit: EventSink;
+}
+
+export function voiceStyleInstruction(style?: string): string {
+  const value = (style ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 500);
+  if (!value) return "";
+  return `[本条配音风格] ${value}\n仅对本次回复生效；后续未再次给出时恢复全局。调用 tts-voiceover 或 tts.py speak 时必须用 --style 显式传入这段风格；不要修改 .env 的 MIMO_STYLE_PROMPT。`;
 }
 
 export interface RunningTurn {
@@ -345,6 +352,8 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
       const context = attachmentContext(sessionKey, request.attachments);
       if (context) message = message ? `${message}\n\n${context}` : context;
       if (!message) throw new Error("消息不能为空");
+      const styleNote = voiceStyleInstruction(request.voiceStyle);
+      if (styleNote) message = message ? `${message}\n\n${styleNote}` : styleNote;
       message = chatTurnMessage(message, request.persona);
 
       emit("activity", "⏳ 已收到，pi 正在处理…");

@@ -100,6 +100,8 @@ def _auto_srt(shots: list[dict], durations: list[float], srt_path: Path):
 
 
 DEFAULT_SUB_FONT = "Noto Sans CJK SC"   # 环境已装 fonts-noto-cjk；缺则 libass 回退系统字体
+DEFAULT_SUB_COLOR = "#FFFFFF"          # 字幕主色（#RRGGBB）
+DEFAULT_SUB_OUTLINE_COLOR = "#000000"  # 字幕描边色
 
 
 def _ass_ts(srt_ts: str) -> str:
@@ -151,9 +153,27 @@ def wrap_caption(text: str, max_units: float) -> list[str]:
     return out or [flat]
 
 
+def _ass_color(value: str, default: str) -> str:
+    """把 #RRGGBB 转成 ASS 的 &HAABBGGRR（不透明）；非法值回落默认。"""
+    raw = str(value or "").strip().lstrip("#")
+    if len(raw) == 8:          # 已带 AA 的 AARRGGBB → 丢掉 AA
+        raw = raw[2:]
+    try:
+        if len(raw) != 6:
+            raise ValueError
+        int(raw, 16)
+    except ValueError:
+        raw = default.strip().lstrip("#")
+    r, g, b = raw[0:2], raw[2:4], raw[4:6]
+    return f"&H00{b}{g}{r}".upper()
+
+
 def _srt_to_ass(srt_path: Path, ass_path: Path, w: int, h: int,
                 font: str = DEFAULT_SUB_FONT, font_size: int | None = None,
-                margin_v: int | None = None) -> Path:
+                margin_v: int | None = None, color: str = DEFAULT_SUB_COLOR,
+                margin_h: int | None = None,
+                outline_color: str = DEFAULT_SUB_OUTLINE_COLOR,
+                outline: int | None = None, bold: bool = True) -> Path:
     """把 SRT 转成带完整样式的 ASS，尺寸/位置/折行**确定可控**（治「字幕过大 / 超出边界 / 挤成一行」）。
 
     关键：显式 PlayResX/Y = 视频尺寸，字号就是像素级别、不再被 libass 按默认 288 放大。
@@ -161,10 +181,15 @@ def _srt_to_ass(srt_path: Path, ass_path: Path, w: int, h: int,
     不再横屏字号翻倍过大），Alignment=2 底部居中，MarginV≈高*0.07，MarginL/R≈宽*0.06。
     **长行按可用宽度确定性折行**（wrap_caption，CJK 逐字），保证不超边界、自适应视频宽度、可多行。
     白字黑描边（Outline=2, Shadow=0）竖/横屏可读。
+    颜色/描边/粗体可经 color / outline_color / outline / bold 定制（如橙字高对比字幕）。
     """
     fs = int(font_size if font_size else round(min(w, h) * 0.05))
     mv = int(margin_v if margin_v is not None else round(h * 0.07))
-    mh = int(round(w * 0.06))
+    mh = int(margin_h if margin_h is not None else round(w * 0.06))
+    primary = _ass_color(color, DEFAULT_SUB_COLOR)
+    outline_c = _ass_color(outline_color, DEFAULT_SUB_OUTLINE_COLOR)
+    ol = int(outline if outline is not None else 2)
+    bold_flag = 1 if bold else 0
     # 每行最大宽度单位 = 可用像素宽 / 字号；留 6% 安全余量防描边/字距溢出。
     max_units = max(6.0, (w - 2 * mh) / fs * 0.94)
     header = (
@@ -176,8 +201,8 @@ def _srt_to_ass(srt_path: Path, ass_path: Path, w: int, h: int,
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
-        f"0,0,0,0,100,100,0,0,1,2,0,2,{mh},{mh},{mv},1\n\n"
+        f"Style: Default,{font},{fs},{primary},&H000000FF,{outline_c},&H00000000,"
+        f"{bold_flag},0,0,0,100,100,0,0,1,{ol},0,2,{mh},{mh},{mv},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -515,8 +540,15 @@ def cmd_assemble(args) -> int:
                 _srt_to_ass(sub_path, ass_path, w, h,
                             font=getattr(args, "sub_font", None) or DEFAULT_SUB_FONT,
                             font_size=getattr(args, "sub_size", None),
-                            margin_v=getattr(args, "sub_margin_v", None))
-            escaped = str(ass_path).replace("'", "\\'").replace(":", "\\:")
+                            margin_v=getattr(args, "sub_margin_v", None),
+                            color=getattr(args, "sub_color", None) or DEFAULT_SUB_COLOR,
+                            margin_h=getattr(args, "sub_margin_h", None),
+                            outline_color=(getattr(args, "sub_outline_color", None)
+                                           or DEFAULT_SUB_OUTLINE_COLOR),
+                            outline=getattr(args, "sub_outline", None),
+                            bold=not getattr(args, "sub_no_bold", False))
+            # Windows 路径含反斜杠，滤镜字符串会把 \ 当转义吃掉 → 统一转正斜杠再转义冒号
+            escaped = str(ass_path).replace("\\", "/").replace("'", "\\'").replace(":", "\\:")
             _run(["ffmpeg", "-y", "-i", str(stage),
                   "-vf", f"subtitles='{escaped}'",
                   "-c:a", "copy", str(delivery)])
@@ -706,6 +738,16 @@ def main() -> int:
                    help="字幕字号（默认按宽度 ≈w*0.05，1080→54）")
     p.add_argument("--sub-margin-v", dest="sub_margin_v", type=int, default=None,
                    help="字幕距底边距（默认按高度 ≈h*0.07）")
+    p.add_argument("--sub-color", dest="sub_color", default=None,
+                   help=f"字幕主色 #RRGGBB（默认 {DEFAULT_SUB_COLOR}）")
+    p.add_argument("--sub-margin-h", dest="sub_margin_h", type=int, default=None,
+                   help="字幕左右边距（默认按宽 ≈w*0.06；小一点可让长句单行不折行）")
+    p.add_argument("--sub-outline-color", dest="sub_outline_color", default=None,
+                   help=f"字幕描边色 #RRGGBB（默认 {DEFAULT_SUB_OUTLINE_COLOR}）")
+    p.add_argument("--sub-outline", dest="sub_outline", type=int, default=None,
+                   help="字幕描边粗细（默认 2；亮背景下建议 4）")
+    p.add_argument("--sub-no-bold", dest="sub_no_bold", action="store_true",
+                   help="关闭字幕加粗（默认加粗）")
     p.add_argument("--pad-mode", dest="pad_mode", default=None,
                    choices=["trim", "auto", "stretch", "loop", "freeze"],
                    help="视频短于所需时长时填满方式：trim=自然(裁/仅冻结尾巴,不慢放不循环,短剧默认)、"

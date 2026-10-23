@@ -20,6 +20,7 @@ export interface ChatSession {
   approval?: ApprovalMode; // 审批模式：默认 manual，auto 仅自动放行 ask
   model?: string; // 会话级模型覆盖；留空跟随全局
   thinking?: ThinkingLevel; // 会话级思考深度覆盖；留空跟随全局
+  voiceStyle?: string; // 本会话配音风格覆盖；留空跟随全局 MIMO_STYLE_PROMPT
   archived?: boolean;   // 归档：从 History 主列表移到「已归档」区
 }
 

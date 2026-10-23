@@ -276,6 +276,7 @@ export default function App() {
     approval: ApprovalMode = 'manual',
     model = '',
     thinkingLevel: ThinkingLevel | '' = '',
+    voiceStyle = '',
   ) => {
     const turnId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(`easel_pending_turn:${sessionId}`, turnId); } catch { /* ignore */ }
@@ -372,7 +373,7 @@ export default function App() {
       },
       // onHeartbeat：防呆心跳（30s 静默）。只设独立的「未卡住」提示，绝不写 activity/thinking → 不顶掉真实状态。
       (note) => setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)),
-      approval, model, thinkingLevel,
+      approval, model, thinkingLevel, voiceStyle,
     );
   }, [appendAssistant, clearStream]);
 
@@ -383,6 +384,7 @@ export default function App() {
     const approval = s?.approval || 'manual';
     const model = s?.model || '';
     const thinkingLevel = s?.thinking || '';
+    const voiceStyle = s?.voiceStyle || '';
     const last = s?.messages[s.messages.length - 1];
     if (!last || last.role !== 'user') return;   // 没有悬空的用户消息 = 无需恢复
     let turnId = s.pendingTurnId;
@@ -485,7 +487,7 @@ export default function App() {
       },
       // onHeartbeat：同上，独立的「未卡住」提示，不覆盖 activity/thinking。
       (note) => setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)),
-      approval, model, thinkingLevel,
+      approval, model, thinkingLevel, voiceStyle,
     );
   }, [appendAssistant, clearStream]);
 
@@ -510,6 +512,7 @@ export default function App() {
     const approval = cur?.approval || 'manual';
     const model = cur?.model || '';
     const thinkingLevel = cur?.thinking || '';
+    const voiceStyle = cur?.voiceStyle || '';
     setSessions((prev) => {
       const next = prev.map((s) => {
         if (s.id !== sessionId) return s;
@@ -529,20 +532,20 @@ export default function App() {
       saveSessions(next);
       return next;
     });
-    startStream(sessionId, agentMessage, persona, attachments, approval, model, thinkingLevel);
+    startStream(sessionId, agentMessage, persona, attachments, approval, model, thinkingLevel, voiceStyle);
   }, [selectedPersona, startStream]);
 
   const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[]) => {
     sendUserAndStream(sessionId, displayText, attachments);
   }, [sendUserAndStream]);
 
-  const handleApprovalChange = useCallback((sessionId: string, approval: ApprovalMode) => {
+  const handleApprovalChange = useCallback(async (sessionId: string, approval: ApprovalMode) => {
     setSessions((prev) => {
       const next = prev.map((s) => (s.id === sessionId ? { ...s, approval } : s));
       saveSessions(next);
       return next;
     });
-    void setChatApproval(sessionId, approval).catch(() => {});
+    await setChatApproval(sessionId, approval).catch(() => {});
   }, []);
 
   const handleModelChange = useCallback((sessionId: string, model: string) => {
@@ -559,6 +562,16 @@ export default function App() {
     setSessions((prev) => {
       const next = prev.map((s) => (s.id === sessionId
         ? { ...s, thinking: thinking || undefined }
+        : s));
+      saveSessions(next);
+      return next;
+    });
+  }, []);
+
+  const handleVoiceStyleChange = useCallback((sessionId: string, voiceStyle: string) => {
+    setSessions((prev) => {
+      const next = prev.map((s) => (s.id === sessionId
+        ? { ...s, voiceStyle: voiceStyle.trim() || undefined }
         : s));
       saveSessions(next);
       return next;
@@ -763,6 +776,7 @@ export default function App() {
             onApprovalChange={(mode) => handleApprovalChange(activeSession.id, mode)}
             onModelChange={(model) => handleModelChange(activeSession.id, model)}
             onThinkingChange={(thinking) => handleThinkingChange(activeSession.id, thinking)}
+            onVoiceStyleChange={(voiceStyle) => handleVoiceStyleChange(activeSession.id, voiceStyle)}
             onQuestionAnswered={(qid) => {
               answeredRef.current.add(qid);
               // 已答题从流式状态中移除——切走/切回会话都不再重现（组件内部 state 会在重挂时清零，只藏不移除没用）

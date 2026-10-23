@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { ChatQuestion, ChatQuestionItem } from '../lib/api';
+import type { ApprovalMode, ChatQuestion, ChatQuestionItem } from '../lib/api';
 import { answerQuestion } from '../lib/api';
 
 /**
@@ -13,17 +13,32 @@ import { answerQuestion } from '../lib/api';
  * 多选：问题对象带 multiSelect: true 时，answers[qid] 可携带多个 label
  * 前端只按数据的 multiSelect 渲染，不绕过服务端校验。
  */
-function QuestionCard({ question, onAnswered }: { question: ChatQuestion; onAnswered: () => void }) {
+function QuestionCard({
+  question,
+  approval,
+  onAutoApprove,
+  onAnswered,
+}: {
+  question: ChatQuestion;
+  approval: ApprovalMode;
+  onAutoApprove?: () => void | Promise<void>;
+  onAnswered: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [custom, setCustom] = useState<Record<string, string>>({});
   const [customVals, setCustomVals] = useState<Record<string, string[]>>({});
   const [showCustom, setShowCustom] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const items: ChatQuestionItem[] = question.questions || [];
   const valsOf = (it: ChatQuestionItem): string[] => selected[it.questionId] || [];
   const allAnswered = items.length > 0 && items.every((it) => valsOf(it).length > 0);
+  const permissionCard = items.length === 1
+    && items[0].questionId === 'ui_select'
+    && items[0].header === '需要确认'
+    && (items[0].options || []).some((opt) => opt.label === '允许本次');
 
   const pick = (it: ChatQuestionItem, label: string) => {
     setSelected((s) => {
@@ -53,12 +68,17 @@ function QuestionCard({ question, onAnswered }: { question: ChatQuestion; onAnsw
     setCustomVals((c) => ({ ...c, [it.questionId]: (c[it.questionId] || []).filter((x) => x !== v) }));
   };
 
-  const submit = async () => {
-    if (busy || !allAnswered) return;
+  const submit = async (autoApprove = false) => {
+    const allowAndAuto = autoApprove && permissionCard;
+    if (busy || (!allAnswered && !allowAndAuto)) return;
     setBusy(true); setError('');
     const answers: Record<string, string[]> = {};
-    for (const it of items) answers[it.questionId] = valsOf(it);
+    for (const it of items) {
+      answers[it.questionId] = allowAndAuto ? ['允许本次'] : valsOf(it);
+    }
+    if (allowAndAuto) setSelected(answers);
     try {
+      if (allowAndAuto) await onAutoApprove?.();
       const res = await answerQuestion({ questionId: question.id, answers });
       if (!res.ok) setError(res.error || '提交失败');
       else onAnswered();
@@ -86,6 +106,16 @@ function QuestionCard({ question, onAnswered }: { question: ChatQuestion; onAnsw
                   {it.question || '请选择'}
                   {it.multiSelect && <span className="question-card__multi">可多选</span>}
                 </div>
+                {it.detail && (
+                  <div className={`question-card__detail${expanded[it.questionId] ? ' question-card__detail--open' : ''}`}>
+                    <code title={expanded[it.questionId] ? undefined : it.detail}>{it.detail}</code>
+                    <button className="question-card__detail-toggle" type="button"
+                      aria-expanded={!!expanded[it.questionId]}
+                      onClick={() => setExpanded((s) => ({ ...s, [it.questionId]: !s[it.questionId] }))}>
+                      {expanded[it.questionId] ? '收起' : '展开'}
+                    </button>
+                  </div>
+                )}
                 <div className="question-card__options">
                   {options.map((opt) => (
                     <button key={opt.label}
@@ -132,6 +162,13 @@ function QuestionCard({ question, onAnswered }: { question: ChatQuestion; onAnsw
           {/* 单选题：选完点提交；多题：全部选齐后提交（单选/多选同一规则） */}
           {items.length === 1 ? (
             <div className="question-card__actions">
+              {permissionCard && approval === 'manual' && onAutoApprove && (
+                <button className="question-card__auto" disabled={busy}
+                  onClick={() => void submit(true)}
+                  title="允许本次执行，并将本会话后续确认改为自动放行">
+                  允许并自动审批后续
+                </button>
+              )}
               <button className="question-card__submit" disabled={busy || !allAnswered}
                 onClick={() => void submit()}>
                 提交
@@ -155,7 +192,17 @@ function QuestionCard({ question, onAnswered }: { question: ChatQuestion; onAnsw
 }
 
 /** 流式中的 ask_user 问答题列表（一次性卡片，答完即从当前流移除）。 */
-export default function QuestionCards({ questions, onDone }: { questions: ChatQuestion[]; onDone?: (questionId: string) => void }) {
+export default function QuestionCards({
+  questions,
+  approval = 'manual',
+  onAutoApprove,
+  onDone,
+}: {
+  questions: ChatQuestion[];
+  approval?: ApprovalMode;
+  onAutoApprove?: () => void | Promise<void>;
+  onDone?: (questionId: string) => void;
+}) {
   const [answered, setAnswered] = useState<Record<string, boolean>>({});
   const visible = useMemo(
     () => questions.filter((q) => !answered[q.id]),
@@ -165,10 +212,11 @@ export default function QuestionCards({ questions, onDone }: { questions: ChatQu
   return (
     <>
       {visible.map((q) => (
-        <QuestionCard key={q.id} question={q} onAnswered={() => {
-          setAnswered((a) => ({ ...a, [q.id]: true }));
-          onDone?.(q.id);   // 通知 App：此题已答，重放/恢复不再出现
-        }} />
+        <QuestionCard key={q.id} question={q} approval={approval} onAutoApprove={onAutoApprove}
+          onAnswered={() => {
+            setAnswered((a) => ({ ...a, [q.id]: true }));
+            onDone?.(q.id);   // 通知 App：此题已答，重放/恢复不再出现
+          }} />
       ))}
     </>
   );

@@ -3,10 +3,12 @@ import MessageBubble from './MessageBubble';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
 import SessionControls from './SessionControls';
+import VoiceStyleMenu from './VoiceStyleControl';
+import { voiceStyleLabel } from '../lib/voiceStyle';
 import type { ChatSession, ChatMessage, StreamState } from '../lib/store';
 import { uploadFiles, adoptOversize } from '../lib/api';
 import type { UploadedFile, ApprovalMode, ThinkingLevel } from '../lib/api';
-import { IconArrowUp, IconStop, IconPlus, IconFile, IconShield, IconChevron, IconCheck } from './icons';
+import { IconArrowUp, IconStop, IconPlus, IconFile, IconShield, IconMic, IconChevron, IconCheck } from './icons';
 
 interface ChatPageProps {
   session: ChatSession;
@@ -21,9 +23,10 @@ interface ChatPageProps {
   ) => void; // 重试：仅对最后一轮
   onQuestionAnswered?: (questionId: string) => void;   // 某道问答题提交成功（App 记录答过，重放不再出现）
   approval: ApprovalMode;
-  onApprovalChange: (approval: ApprovalMode) => void;
+  onApprovalChange: (approval: ApprovalMode) => void | Promise<void>;
   onModelChange: (model: string) => void;
   onThinkingChange: (thinking: ThinkingLevel | '') => void;
+  onVoiceStyleChange: (voiceStyle: string) => void;
 }
 
 // 空态推荐（贴合 Easel 社媒创作场景）
@@ -42,7 +45,7 @@ function greeting(): string {
 
 export default function ChatPage({
   session, stream, onSend, onStop, onResend, onQuestionAnswered, approval, onApprovalChange,
-  onModelChange, onThinkingChange,
+  onModelChange, onThinkingChange, onVoiceStyleChange,
 }: ChatPageProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<UploadedFile[]>([]);
@@ -51,6 +54,7 @@ export default function ChatPage({
   const [maxMb, setMaxMb] = useState(50);
   const [menuOpen, setMenuOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
+  const [voiceStyleOpen, setVoiceStyleOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,7 +71,7 @@ export default function ChatPage({
 
   useEffect(() => {
     if (!menuOpen) return;
-    const close = () => { setMenuOpen(false); setApprovalOpen(false); };
+    const close = () => { setMenuOpen(false); setApprovalOpen(false); setVoiceStyleOpen(false); };
     const onPointerDown = (e: MouseEvent) => {
       if (!toolMenuRef.current?.contains(e.target as Node)) close();
     };
@@ -140,6 +144,7 @@ export default function ChatPage({
     setAttachments([]);
     setMenuOpen(false);
     setApprovalOpen(false);
+    setVoiceStyleOpen(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -190,10 +195,11 @@ export default function ChatPage({
         <div className="composer-bar-left">
           <div className="composer-tool-menu" ref={toolMenuRef}>
           <button className="composer-attach-btn" type="button"
-            onClick={() => { setMenuOpen((v) => !v); setApprovalOpen(false); }}
+            onClick={() => { setMenuOpen((v) => !v); setApprovalOpen(false); setVoiceStyleOpen(false); }}
+            aria-label="添加"
             aria-haspopup="menu" aria-expanded={menuOpen}
-            title={`添加素材或设置审批模式（当前：${approval === 'auto' ? 'Auto' : 'Manual'}）`}>
-            <IconPlus size={15} /> {uploading ? '上传中…' : '添加'}
+            title={`添加素材、配音风格或设置审批模式（当前：${approval === 'auto' ? 'Auto' : 'Manual'}）`}>
+            <IconPlus size={16} />
             {approval === 'auto' && <span className="composer-auto-dot" title="审批自动放行" />}
           </button>
           {menuOpen && (
@@ -208,7 +214,32 @@ export default function ChatPage({
                 <span className="composer-menu-note">图片 / 文档</span>
               </button>
               <div className="composer-menu-sub"
-                onMouseEnter={() => { if (!isStreaming) setApprovalOpen(true); }}
+                onMouseEnter={() => { if (!isStreaming) { setVoiceStyleOpen(true); setApprovalOpen(false); } }}
+                onMouseLeave={() => setVoiceStyleOpen(false)}>
+                <button className="composer-menu-item" type="button"
+                  disabled={isStreaming}
+                  aria-haspopup="menu" aria-expanded={voiceStyleOpen}
+                  onClick={() => setVoiceStyleOpen(true)}>
+                  <IconMic size={15} />
+                  <span>配音风格</span>
+                  <span className="composer-menu-current">{voiceStyleLabel(session.voiceStyle)}</span>
+                  <IconChevron size={14} className="composer-menu-chevron" />
+                </button>
+                {voiceStyleOpen && !isStreaming && (
+                  <div className="composer-submenu composer-style-submenu" role="menu">
+                    <VoiceStyleMenu
+                      value={session.voiceStyle}
+                      onSelect={(value) => {
+                        onVoiceStyleChange(value);
+                        setMenuOpen(false);
+                        setVoiceStyleOpen(false);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="composer-menu-sub"
+                onMouseEnter={() => { if (!isStreaming) { setApprovalOpen(true); setVoiceStyleOpen(false); } }}
                 onMouseLeave={() => setApprovalOpen(false)}>
                 <button className="composer-menu-item" type="button"
                   disabled={isStreaming}
@@ -248,9 +279,8 @@ export default function ChatPage({
             disabled={isStreaming} onModelChange={onModelChange}
             onThinkingChange={onThinkingChange} />
         </div>
-        <span className="composer-hint">{isStreaming ? '生成中…' : 'Enter 发送 · Shift+Enter 换行'}</span>
         {isStreaming ? (
-          <button className="send-btn" onClick={onStop} title="停止生成"><IconStop size={15} /></button>
+          <button className="send-btn send-btn--stop" onClick={onStop} title="停止生成"><IconStop size={15} /></button>
         ) : (
           <button className="send-btn" onClick={handleSend} disabled={(!input.trim() && !attachments.length) || uploading} title="发送"><IconArrowUp size={17} /></button>
         )}
@@ -337,7 +367,12 @@ export default function ChatPage({
             );
           })}
           {isStreaming && (stream!.questions?.length ?? 0) > 0 && (
-            <QuestionCards questions={stream!.questions || []} onDone={(qid) => onQuestionAnswered?.(qid)} />
+            <QuestionCards
+              questions={stream!.questions || []}
+              approval={approval}
+              onAutoApprove={() => onApprovalChange('auto')}
+              onDone={(qid) => onQuestionAnswered?.(qid)}
+            />
           )}
           <div ref={messagesEndRef} />
         </div>

@@ -93,6 +93,7 @@ function mediaRows(spec: RegistryGroup, group: string, env: Record<string, strin
     const secrets = editKeys(provider);
     const first = secrets[0];
     const second = secrets[1];
+    const isMimoVoice = group === "voice" && provider.id === "xiaomi-mimo";
     return {
       slot: provider.id,
       order: 0,
@@ -106,6 +107,7 @@ function mediaRows(spec: RegistryGroup, group: string, env: Record<string, strin
       result: required.every((key) => configured(env, key)) ? "已配置" : "未配置",
       key2Label: second?.label ?? "",
       key2Masked: second?.secret ? mask(envValue(env, second)) : "",
+      ...(isMimoVoice ? { stylePrompt: String(env.MIMO_STYLE_PROMPT ?? "") } : {}),
       modelEditable: Boolean(model),
       baseEditable: Boolean(base),
       baseOptional: !base?.required,
@@ -282,6 +284,12 @@ export async function saveModelRows(
     if (key2 && secrets[1]) updates[secrets[1].env] = key2;
     if (model && modelField) updates[modelField.env] = model;
     if (base && baseField) updates[baseField.env] = base;
+    if (group === "voice" && id === "xiaomi-mimo"
+      && Object.prototype.hasOwnProperty.call(row, "stylePrompt")) {
+      updates.MIMO_STYLE_PROMPT = String(row.stylePrompt ?? "")
+        .replace(/[\r\n]+/g, " ")
+        .trim();
+    }
     if (row.primary === true) primary = id;
   }
   if (primary && GROUP_PRIMARY[group]) updates[GROUP_PRIMARY[group]] = primary;

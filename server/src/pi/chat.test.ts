@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { terminalAssistantError } from "./chat.js";
+import { terminalAssistantError, voiceStyleInstruction } from "./chat.js";
 
 test("terminalAssistantError ignores failures that pi will retry", () => {
   assert.equal(terminalAssistantError([
@@ -31,4 +31,13 @@ test("terminalAssistantError only inspects the latest assistant message", () => 
     { role: "assistant", stopReason: "error", errorMessage: "old failure" },
     { role: "assistant", stopReason: "stop" },
   ], false), "");
+});
+
+test("voiceStyleInstruction carries a single-line per-video style", () => {
+  const note = voiceStyleInstruction("冷静拆解\n像工程师复盘");
+  assert.match(note, /冷静拆解 像工程师复盘/);
+  assert.match(note, /--style/);
+  assert.match(note, /MIMO_STYLE_PROMPT/);
+  assert.equal(voiceStyleInstruction("   "), "");
+  assert.ok(voiceStyleInstruction("x".repeat(600)).length < 700);
 });

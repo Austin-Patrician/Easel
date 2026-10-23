@@ -7,13 +7,14 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-type Decision = { action: "allow" | "deny" | "ask"; reason?: string; detail?: string };
+type Decision = { action: "allow" | "deny" | "ask"; reason?: string; title?: string; detail?: string };
 
 interface HostBridge {
   permission(sessionId: string, event: { toolName: string; input: unknown; cwd: string }): Promise<Decision>;
+  ask(sessionId: string, questions: unknown[], timeoutSeconds?: number): Promise<Record<string, string[]>>;
 }
 
-const SAFE_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const SAFE_READ_TOOLS = new Set(["read", "grep", "find", "ls", "web_search", "web_extract"]);
 
 export default function permissionExtension(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
@@ -38,14 +39,20 @@ export default function permissionExtension(pi: ExtensionAPI) {
       return { block: true, reason: decision.reason || "权限策略拒绝了此操作" };
     }
 
-    if (!ctx.hasUI) {
+    if (!host || !ctx.hasUI) {
       return { block: true, reason: "此操作需要用户确认，但当前没有可用的确认界面" };
     }
-    const choice = await ctx.ui.select(
-      decision.detail || `允许执行「${event.toolName}」？`,
-      ["允许本次", "拒绝"],
-    );
-    if (choice !== "允许本次") return { block: true, reason: "用户拒绝了此操作" };
+    const answers = await host.ask(ctx.sessionManager.getSessionId(), [{
+      questionId: "ui_select",
+      header: "需要确认",
+      question: decision.title || `允许执行「${event.toolName}」？`,
+      detail: decision.detail,
+      options: [{ label: "允许本次" }, { label: "拒绝" }],
+      multiSelect: false,
+    }]);
+    if (answers.ui_select?.[0] !== "允许本次") {
+      return { block: true, reason: "用户拒绝了此操作" };
+    }
     return undefined;
   });
 }

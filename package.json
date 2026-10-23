@@ -14,7 +14,7 @@
     "start": "node server/dist/index.js",
     "dev": "tsx watch server/src/index.ts",
     "typecheck": "tsc -p server/tsconfig.json --noEmit",
-    "test:server": "node --test server/dist/pi/host.test.js server/dist/pi/models.test.js server/dist/pi/chat.test.js server/dist/jobs.test.js"
+    "test:server": "node --test server/dist/pi/host.test.js server/dist/pi/models.test.js server/dist/pi/chat.test.js server/dist/pi/tavily.test.js server/dist/jobs.test.js"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^1.3.0",

@@ -7,10 +7,11 @@ import type { JobView } from './EnvBoard';
 import {
   fetchEnvTools, startEnvInstall, fetchEnvJob,
   fetchModelChannels, runChannelSelftest, saveModelConfig,
-  fetchAvailableModels,
+  fetchAvailableModels, fetchWebSearchSettings, saveWebSearchSettings, testWebSearch,
 } from '../lib/api';
-import type { EnvTool, ModelRow, SelftestResult } from '../lib/api';
+import type { EnvTool, ModelRow, SelftestResult, WebSearchSettings } from '../lib/api';
 import { IconSlidersHorizontal, IconPackage, IconEllipsis } from './settingsIcons';
+import { VOICE_STYLE_PRESETS } from '../lib/voiceStyle';
 
 interface Props {
   onClose: () => void;
@@ -21,7 +22,7 @@ interface Props {
 }
 
 type Sec = 'model' | 'env' | 'more';
-type Chan = 'chat' | 'transcribe' | 'speech' | 'image' | 'video' | 'music';
+type Chan = 'chat' | 'transcribe' | 'speech' | 'image' | 'video' | 'music' | 'search';
 
 const CHANNELS: { id: Chan; label: string }[] = [
   { id: 'chat', label: '对话与脚本' },
@@ -30,6 +31,7 @@ const CHANNELS: { id: Chan; label: string }[] = [
   { id: 'image', label: '生图' },
   { id: 'video', label: '视频' },
   { id: 'music', label: '音乐' },
+  { id: 'search', label: '联网搜索' },
 ];
 
 /** 后台繁忙（整机高负载）时的抗抖动取数：单次超时即重试，撑过多秒级接口延迟。 */
@@ -61,6 +63,12 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
   const [chan, setChan] = useState<Chan>('chat');
   const [harness, setHarness] = useState('pi');
 
+  const [webSearch, setWebSearch] = useState<WebSearchSettings | null>(null);
+  const [webSearchLoading, setWebSearchLoading] = useState(false);
+  const [webSearchKey, setWebSearchKey] = useState('');
+  const [webSearchTesting, setWebSearchTesting] = useState(false);
+  const [webSearchNote, setWebSearchNote] = useState('');
+
   // ── 环境安装（引擎真实数据） ──────────────────────────────
   const [tools, setTools] = useState<EnvTool[]>([]);
   const [python, setPython] = useState('');
@@ -86,6 +94,22 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
   useEffect(() => {
     if (sec === 'env') void refreshEnv();
   }, [sec, refreshEnv]);
+
+  const refreshWebSearch = useCallback(async () => {
+    setWebSearchLoading(true);
+    setWebSearchNote('');
+    try {
+      setWebSearch(await fetchWithRetry(() => fetchWebSearchSettings(), 3, 15_000));
+    } catch (e) {
+      setWebSearchNote(e instanceof Error ? `读取失败：${e.message}` : '读取失败');
+    } finally {
+      setWebSearchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sec === 'model' && chan === 'search') void refreshWebSearch();
+  }, [sec, chan, refreshWebSearch]);
 
   const batchMode = useRef(false);
 
@@ -239,6 +263,29 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
   const [savedNote, setSavedNote] = useState('');
 
   const saveCurrent = useCallback(async () => {
+    if (chan === 'search') {
+      const apiKey = webSearchKey.trim();
+      if (!apiKey) {
+        setSavedNote('保存失败：请填写 Tavily API Key');
+        return;
+      }
+      setSaving(true);
+      setSavedNote('');
+      try {
+        const d = await fetchWithRetry(() => saveWebSearchSettings(apiKey), 3, 20_000);
+        setWebSearch(d);
+        setWebSearchKey('');
+        setWebSearchNote('');
+        setSavedNote('✓ 已保存，联网搜索已启用');
+      } catch (e) {
+        setSavedNote(e instanceof Error ? `保存失败：${e.message}` : '保存失败');
+      } finally {
+        setSaving(false);
+        setTimeout(() => setSavedNote(''), 6000);
+      }
+      return;
+    }
+
     const rows = chan === 'chat' ? chatRows : chan === 'transcribe' ? transRows : (mediaRows[chan] || []);
     const payload = rows
       .filter((r) => r.slot)
@@ -251,6 +298,8 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
         baseUrl: PLACEHOLDERS.has(r.baseUrl) ? '' : r.baseUrl,
         key: r.keyNew || '',
         key2: r.keyNew2 || '',
+        stylePrompt: chan === 'speech' && r.slot === 'xiaomi-mimo'
+          ? (r.stylePrompt || '') : undefined,
         primary: r.role === '主',
         // 协议只对自定义供应商有意义；其余行后端不读这个字段
         protocol: r.slot === 'custom' ? (r.protocol || 'openai') : undefined,
@@ -282,7 +331,25 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
       setSaving(false);
       setTimeout(() => setSavedNote(''), 6000);
     }
-  }, [chan, chatRows, transRows, mediaRows, refreshEnv]);
+  }, [chan, chatRows, transRows, mediaRows, webSearchKey, refreshEnv]);
+
+  const runWebSearchTest = useCallback(async () => {
+    setWebSearchTesting(true);
+    setWebSearchNote('');
+    try {
+      const result = await testWebSearch(webSearchKey.trim());
+      if (result.ok) {
+        const count = typeof result.resultCount === 'number' ? ` · 返回 ${result.resultCount} 条` : '';
+        setWebSearchNote(`连接正常 · ${result.ms}ms${count}`);
+      } else {
+        setWebSearchNote(`测试失败：${result.detail || '未知错误'}`);
+      }
+    } catch (e) {
+      setWebSearchNote(e instanceof Error ? `测试失败：${e.message}` : '测试失败');
+    } finally {
+      setWebSearchTesting(false);
+    }
+  }, [webSearchKey]);
 
   // Esc 关闭
   useEffect(() => {
@@ -367,7 +434,7 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
     ) : rows.length === 0 ? (
       <div className="board"><div className="empty">还没有配置。<span className="hint">可在「环境安装」先补齐本地能力。</span></div></div>
     ) : (
-      <div className="board">
+      <div className="board board-scroll">
         <div className="prow head">
           <span>顺序</span><span>供应商</span><span>类型</span><span>模型</span>
           <span>Base URL</span><span>API Key</span><span>角色</span><span>上次结果</span>
@@ -606,16 +673,24 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
             <button
               className="btn btn-sm btn-primary"
               onClick={() => void saveCurrent()}
-              disabled={saving || modelLoading || sec !== 'model' || chan === 'chat'}
-              title={chan === 'chat' ? 'pi 模型请使用下方「保存配置」保存' : undefined}
+              disabled={saving || sec !== 'model' || chan === 'chat' || (chan !== 'search' && modelLoading)}
+              title={
+                chan === 'chat'
+                  ? 'pi 模型请使用下方「保存配置」保存'
+                  : chan === 'search' ? '保存 Tavily API Key' : undefined
+              }
             >
               {saving ? '保存中…' : '保存配置'}
             </button>
             <button
               className="btn btn-sm"
               onClick={() => void doSelftest(sec === 'model' ? chan : 'all')}
-              disabled={testing || modelLoading || (sec === 'model' && chan === 'chat')}
-              title={sec === 'model' && chan === 'chat' ? 'pi 对话请发送消息或运行 easel ping 验证' : undefined}
+              disabled={testing || (sec === 'model' && (modelLoading || chan === 'chat' || chan === 'search'))}
+              title={
+                sec === 'model' && chan === 'chat'
+                  ? 'pi 对话请发送消息或运行 easel ping 验证'
+                  : sec === 'model' && chan === 'search' ? '联网搜索请使用本页「测试连接」' : undefined
+              }
             >
               {testing ? '自测中…' : '全部自测'}
             </button>
@@ -683,6 +758,49 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
                       <span className="spacer" />
                     </div>
                     {renderBoard(mediaRows.speech || [], { onRow: (i, p) => updateMediaRow('speech', i, p), onPrimary: (i) => setMediaPrimary('speech', i), media: true }, 'speech')}
+                    {(() => {
+                      const rowIndex = (mediaRows.speech || []).findIndex((r) => r.slot === 'xiaomi-mimo');
+                      if (rowIndex < 0) return null;
+                      const style = mediaRows.speech[rowIndex].stylePrompt || '';
+                      return (
+                        <div className="voice-style-block">
+                          <div className="voice-style-head">
+                            <div>
+                              <strong>全局配音风格</strong>
+                              <span className="desc">写入 MIMO_STYLE_PROMPT；未单独覆盖的会话都使用它。</span>
+                            </div>
+                            <span className="voice-style-count">{style.length}/200</span>
+                          </div>
+                          <input
+                            className="field"
+                            value={style}
+                            maxLength={200}
+                            placeholder="例如：冷静、克制，像工程师复盘问题，句尾收住。"
+                            onChange={(e) => updateMediaRow('speech', rowIndex, { stylePrompt: e.target.value })}
+                          />
+                          <div className="voice-style-presets">
+                            {VOICE_STYLE_PRESETS.map((preset) => (
+                              <button
+                                type="button"
+                                key={preset.label}
+                                className={`chip${style === preset.value ? ' active' : ''}`}
+                                onClick={() => updateMediaRow('speech', rowIndex, { stylePrompt: preset.value })}
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              className="chip"
+                              onClick={() => updateMediaRow('speech', rowIndex, { stylePrompt: '' })}
+                            >
+                              清空
+                            </button>
+                          </div>
+                          <div className="foot-note">留空=使用音色 profile 的 default_style；单条视频可在对话输入框的「配音」里覆盖。</div>
+                        </div>
+                      );
+                    })()}
                     <div className="foot-note">配音脚本按「主」provider 合成；本地 VoxCPM / edge-tts 在视频产线里可直接替代。</div>
                   </section>
                 )}
@@ -719,6 +837,57 @@ export default function SettingsPanel({ onClose, banner = '', onModelConfigured 
                       <span className="spacer" />
                     </div>
                     {renderBoard(mediaRows.music || [], { onRow: (i, p) => updateMediaRow('music', i, p), onPrimary: (i) => setMediaPrimary('music', i), media: true }, 'music')}
+                  </section>
+                )}
+
+                {chan === 'search' && (
+                  <section className="st-panel active">
+                    <div className="panel-top">
+                      <span className={`pill ${webSearch?.configured ? 'ok' : 'off'}`}>
+                        <span className="dot" />
+                        {webSearchLoading ? '读取中…' : webSearch?.configured ? '已配置' : '未配置'}
+                      </span>
+                      <span className="desc">Tavily · Agent 的 web_search / web_extract</span>
+                      <span className="spacer" />
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => void runWebSearchTest()}
+                        disabled={webSearchTesting || webSearchLoading}
+                      >
+                        {webSearchTesting ? '测试中…' : '测试连接'}
+                      </button>
+                    </div>
+                    <div className="web-search-block">
+                      <div className="voice-style-head">
+                        <div>
+                          <strong>Tavily API Key</strong>
+                          <span className="desc">保存到 .env 的 TAVILY_API_KEY；Agent 下次联网时生效。</span>
+                        </div>
+                        <span className="voice-style-count">
+                          {webSearch?.configured ? `已保存 ${webSearch.keyMasked}` : '未配置'}
+                        </span>
+                      </div>
+                      <input
+                        className="field"
+                        type="password"
+                        value={webSearchKey}
+                        placeholder={webSearch?.configured ? '输入新 Key 替换已保存的值' : 'tvly-...'}
+                        autoComplete="off"
+                        onChange={(e) => setWebSearchKey(e.target.value)}
+                      />
+                      <div className="web-search-links">
+                        <a href="https://app.tavily.com" target="_blank" rel="noreferrer">获取 Tavily Key</a>
+                        <span>填写后点右上角「保存配置」；测试会直接请求 Tavily，不消耗本地模型。</span>
+                      </div>
+                      {webSearchNote && (
+                        <div className={`web-search-note${webSearchNote.startsWith('测试失败') || webSearchNote.startsWith('读取失败') ? ' err' : ''}`}>
+                          {webSearchNote}
+                        </div>
+                      )}
+                    </div>
+                    <div className="foot-note">
+                      web_search 返回标题、URL 与摘要；web_extract 读取网页正文。额度与计费以 Tavily 账户为准。
+                    </div>
                   </section>
                 )}
 

@@ -7,6 +7,7 @@ export interface EaselQuestion {
   questionId: string;
   header?: string;
   question: string;
+  detail?: string;
   options: QuestionOption[];
   multiSelect: boolean;
 }
@@ -190,6 +191,7 @@ function normalizeQuestions(raw: unknown[]): EaselQuestion[] {
       questionId: questionId.slice(0, 80),
       ...(item.header ? { header: String(item.header).slice(0, 40) } : {}),
       question: question.slice(0, 2000),
+      ...(item.detail ? { detail: String(item.detail).slice(0, 3000) } : {}),
       options,
       multiSelect: item.multiSelect === true,
     });
@@ -197,9 +199,9 @@ function normalizeQuestions(raw: unknown[]): EaselQuestion[] {
   return questions;
 }
 
-type Decision = { action: "allow" | "deny" | "ask"; reason?: string; detail?: string };
+type Decision = { action: "allow" | "deny" | "ask"; reason?: string; title?: string; detail?: string };
 
-const SAFE_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const SAFE_READ_TOOLS = new Set(["read", "grep", "find", "ls", "web_search", "web_extract"]);
 const SAFE_BASH =
   /^(pwd|ls|cat|head|tail|wc|sed\s+-n|grep|rg|find|which|command\s+-v|git\s+(status|diff|log|show)|python(3|\.\d+)?\s+(-V|--version)|node\s+(-v|--version)|npm\s+(-v|--version)|ffmpeg\s+-version)\b/;
 // Read-only mode allows simple inspection commands only. Shell separators,
@@ -244,7 +246,8 @@ export async function permission(
     if (target && !inside(event.cwd, target)) {
       return finish({
         action: "ask",
-        detail: `pi 请求在工作区外修改文件：\n${target}\n\n允许本次操作？`,
+        title: "允许在工作区外修改文件？",
+        detail: target,
       });
     }
     return finish({ action: "allow" });
@@ -265,7 +268,8 @@ export async function permission(
     if (DANGEROUS_BASH.test(command)) {
       return finish({
         action: "ask",
-        detail: `pi 请求执行需要确认的命令：\n\n${command.slice(0, 3000)}\n\n允许本次执行？`,
+        title: "允许执行此命令？",
+        detail: command.slice(0, 3000),
       });
     }
     return finish({ action: "allow" });
@@ -273,7 +277,8 @@ export async function permission(
 
   return finish({
     action: "ask",
-    detail: `pi 请求使用工具「${tool}」：\n\n${scrubSecrets(JSON.stringify(event.input)).slice(0, 3000)}\n\n允许本次操作？`,
+    title: `允许使用工具「${tool}」？`,
+    detail: scrubSecrets(JSON.stringify(event.input)).slice(0, 3000),
   });
 }
 

@@ -62,8 +62,10 @@
 }
 :root[data-theme='dark'] .composer { background: var(--bg-elev); border-color: var(--border); }
 :root[data-theme='dark'] .composer:focus-within { border-color: var(--accent-start); }
+:root[data-theme='dark'] .composer-session-icon.is-mono img { filter: brightness(0) invert(1); }
 :root[data-theme='dark'] .suggestion-card { background: var(--surface); }
 :root[data-theme='dark'] :is(.btn-primary, .send-btn, .brush-tab.on) { color: var(--bg); }
+:root[data-theme='dark'] .send-btn--stop { color: #fff; }
 :root[data-theme='dark'] :is(.brush-chip-pipe, .brush-item-pipe) { background: var(--accent-gradient-soft); border-color: var(--border-strong); }
 :root[data-theme='dark'] .message-bubble.user { color: var(--text); border-color: var(--border); }
 :root[data-theme='dark'] .thinking-block { background: var(--accent-soft); }

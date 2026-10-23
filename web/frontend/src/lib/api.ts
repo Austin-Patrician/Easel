@@ -351,6 +351,39 @@ export function saveEnv(updates: Record<string, string>): Promise<{ ok: boolean;
   });
 }
 
+export interface WebSearchSettings {
+  ok: boolean;
+  configured: boolean;
+  keyMasked: string;
+}
+
+export interface WebSearchTestResult {
+  ok: boolean;
+  ms: number;
+  resultCount?: number;
+  detail?: string;
+}
+
+export function fetchWebSearchSettings(): Promise<WebSearchSettings> {
+  return request('/api/settings/web-search');
+}
+
+export function saveWebSearchSettings(apiKey: string): Promise<WebSearchSettings> {
+  return request('/api/settings/web-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+export function testWebSearch(apiKey = ''): Promise<WebSearchTestResult> {
+  return request('/api/settings/web-search/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey: apiKey || undefined }),
+  });
+}
+
 export function executeSkill(skill: string, input: string, persona?: string): Promise<SkillResponse> {
   return request<SkillResponse>('/api/skill', {
     method: 'POST',
@@ -412,6 +445,7 @@ export interface ChatQuestionItem {
   questionId: string;
   header?: string;
   question: string;
+  detail?: string;
   options?: ChatQuestionOption[];
   multiSelect?: boolean;
 }
@@ -703,6 +737,7 @@ export function streamChat(
   approval: ApprovalMode = 'manual',
   model = '',
   thinkingLevel: ThinkingLevel | '' = '',
+  voiceStyle = '',
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -802,6 +837,7 @@ export function streamChat(
               body: JSON.stringify({
                 message, persona: persona || undefined, sessionId, turnId, attachments, approval,
                 model: model || undefined, thinkingLevel: thinkingLevel || undefined,
+                voiceStyle: voiceStyle || undefined,
               }),
               signal: controller.signal,
             })
@@ -920,6 +956,7 @@ export interface ModelRow {
   keyNew2?: string;
   key2Label?: string;
   key2Masked?: string;
+  stylePrompt?: string;
   modelEditable?: boolean;
   baseEditable?: boolean;
   baseOptional?: boolean;
@@ -934,6 +971,7 @@ export interface ModelSaveRow {
   baseUrl: string;
   key: string;
   key2?: string;
+  stylePrompt?: string;
   primary?: boolean;
   /** 自定义供应商上游协议：openai（默认）| anthropic */
   protocol?: string;

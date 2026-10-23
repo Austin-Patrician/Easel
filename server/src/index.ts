@@ -48,6 +48,7 @@ import {
 } from "./content.js";
 import { readJsonStrict } from "./config.js";
 import { answerQuestion, installHostBridge, questionStatus, setTurnApproval } from "./pi/host.js";
+import { tavilySearch, webSearchStatus } from "./pi/tavily.js";
 import {
   PI_PROVIDER_APIS,
   createModelRuntime,
@@ -466,6 +467,41 @@ app.post("/api/env", wrap(async (req, res) => {
   res.json(envStatus());
 }));
 
+app.get("/api/settings/web-search", wrap(async (_req, res) => {
+  res.json({ ok: true, ...webSearchStatus() });
+}));
+
+app.post("/api/settings/web-search", wrap(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const apiKey = String(body.apiKey ?? "").trim();
+  if (!apiKey) fail("请填写 Tavily API Key", 400);
+  if (/\s/.test(apiKey)) fail("Tavily API Key 不能包含空白字符", 400);
+  if (apiKey.length > 300) fail("Tavily API Key 过长", 400);
+  saveEnvUpdates({ TAVILY_API_KEY: apiKey });
+  res.json({ ok: true, ...webSearchStatus() });
+}));
+
+app.post("/api/settings/web-search/test", wrap(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const apiKey = String(body.apiKey ?? "").trim();
+  const env = apiKey ? { ...readEnv(), TAVILY_API_KEY: apiKey } : undefined;
+  const started = Date.now();
+  try {
+    const result = await tavilySearch({
+      query: "Easel Tavily connection test",
+      maxResults: 1,
+      includeAnswer: false,
+    }, { env });
+    res.json({ ok: true, ms: Date.now() - started, resultCount: result.results.length });
+  } catch (error) {
+    res.json({
+      ok: false,
+      ms: Date.now() - started,
+      detail: error instanceof Error ? error.message : "测试失败",
+    });
+  }
+}));
+
 const envToolCache: { ts: number; data: unknown; python: string } = { ts: 0, data: undefined, python: "" };
 const envJobs = new Map<string, Record<string, unknown>>();
 
@@ -719,6 +755,9 @@ app.post("/api/chat/stream", wrap(async (req, res) => {
   if (body.thinkingLevel !== undefined && thinkingLevel === undefined) {
     fail("思考深度无效，只允许 off/minimal/low/medium/high/xhigh/max");
   }
+  const voiceStyle = typeof body.voiceStyle === "string" && body.voiceStyle.trim()
+    ? body.voiceStyle
+    : undefined;
   if (!message.trim() && !attachments.length) fail("消息不能为空");
 
   sseHeaders(res);
@@ -743,6 +782,7 @@ app.post("/api/chat/stream", wrap(async (req, res) => {
       approval,
       model,
       thinkingLevel: thinkingLevel || undefined,
+      voiceStyle,
       turnId: tid,
       emit,
     });
@@ -898,6 +938,7 @@ app.get("/onepage", wrap(async (_req, res) => {
 }));
 app.use("/static", express.static(STATIC_DIR, { fallthrough: true, index: false }));
 app.use("/assets", express.static(path.join(REACT_DIR, "assets"), { fallthrough: true, index: false }));
+app.use("/provider-icons", express.static(path.join(REACT_DIR, "provider-icons"), { fallthrough: true, index: false }));
 app.get("/", wrap(async (_req, res) => {
   const index = path.join(REACT_DIR, "index.html");
   if (!fs.existsSync(index)) {

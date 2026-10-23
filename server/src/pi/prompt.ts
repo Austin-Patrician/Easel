@@ -34,6 +34,7 @@ export function easelInstructions(sandbox: Sandbox): string {
 项目根绝对路径：${PROJECT_ROOT}；先切换到该目录再运行项目脚本。
 技能库：${path.join(SKILLS_DIR, "builtin")}；共享脚本：${path.join(SKILLS_DIR, "shared", "scripts")}。
 每个 SKILL.md 是流程规范，不要求使用原生 /skill 命令；先读取对应技能再执行。
+联网检索优先使用 web_search，读取网页正文使用 web_extract；不要用 curl/wget 搜索或抓网页，只有下载二进制、大文件或工具失败时才用 bash。
 Python 优先使用 ${python}；产物保存到 ${path.join(PROJECT_ROOT, "outputs")}。
 账号画像位于 ${path.join(PROJECT_ROOT, "profiles")}；直接使用该实际路径。
 遵循用户选择的画像和每轮技能提醒。配置检查只使用项目 .env 的脱敏结果，不回显凭证。
@@ -45,6 +46,7 @@ export function createResourceLoader(sandbox: Sandbox): ResourceLoader {
   const extensions = [
     path.join(PROJECT_ROOT, "server", "extensions", "ask-user.ts"),
     path.join(PROJECT_ROOT, "server", "extensions", "permissions.ts"),
+    path.join(PROJECT_ROOT, "server", "extensions", "web-tools.ts"),
   ].filter((file) => fs.existsSync(file));
   return new DefaultResourceLoader({
     cwd: PROJECT_ROOT,

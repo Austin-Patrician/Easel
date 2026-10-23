@@ -25,9 +25,16 @@ layer: publish
 
 ## 能力范围
 
-- **现做**：视频发布、图文发布、扫码登录、发布前预检（plan）。
+- **现做**：视频发布、图文发布、扫码登录、发布前预检（plan）、官方活动查询与报名。
 - 话题：写进作品简介的 `#话题`（抖音自动联想成话题）。
 - 视频发布含：上传等转码（≤5min）+ 选 AI 推荐封面。
+- **官方活动（报名位，不是标签位）**：发布编辑页「基础信息」下方有活动区，点 `+N` 弹出
+  「添加活动」侧边面板，勾选 + 确认即报名；**平台会自动把活动话题写进简介**，卡片标「已添加」。
+  - 查当前可参与：`list-activities`（只读探测，不上传真实作品、不发布）
+  - 发布时报名：`--activities "知识充电站,征稿中"`（名称子串匹配，未命中只告警不阻断）
+  - 顺序约束：必须**先填标题简介再报名活动**——报名会往简介追加话题，反过来会被清空重填冲掉
+  - 已知坑：填完简介后「# 话题联想」浮层会盖住 `+N`，鼠标点击被吃掉；脚本改用元素上派发
+    合成事件绕过命中测试（真机验证）
 
 ## 风险提示
 
@@ -140,8 +147,10 @@ python skills/builtin/skill-publish-log/scripts/log.py record --platform 抖音 
 python skills/shared/scripts/douyin_publish.py check
 python skills/shared/scripts/douyin_publish.py login                     # 抠二维码扫码
 python skills/shared/scripts/douyin_publish.py plan --title T --video /abs/v.mp4 --tags "旅行,攻略"
+python skills/shared/scripts/douyin_publish.py list-activities          # 查当前可参与官方活动
 python skills/shared/scripts/douyin_publish.py publish-video --exec --headed \
-  --title "标题" --content "简介" --video /abs/v.mp4 --tags "旅行,攻略"
+  --title "标题" --content "简介" --video /abs/v.mp4 --tags "旅行,攻略" \
+  --activities "知识充电站"
 python skills/shared/scripts/douyin_publish.py publish --exec --headed \
   --title "标题" --content "简介" --images /abs/a.jpg,/abs/b.jpg
 ```

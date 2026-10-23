@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import random
+import re
 import signal
 import sys
 import time
@@ -72,6 +73,15 @@ SELECTORS = {
     "desc_input": 'div[data-placeholder*="作品简介"][contenteditable="true"], div.editor-kit-container[contenteditable="true"]',
     "publish_container": 'div[class*="card-container-creator-layout"]',
     "toast": 'span[class*="semi-toast-content-text"]',
+    # 官方活动区块（发布编辑页「基础信息」下方）。点 +N 开「添加活动」侧边面板，
+    # 勾选 + 确认即报名，平台会自动把活动话题写进简介、卡片标「已添加」。
+    "activity_list": 'div[class*="activity-list-container"]',
+    "activity_card": '[class*="activity-right"]',
+    # 点开 +N 后弹出的「添加活动」侧边面板（semi-sidesheet）
+    "activity_panel": ".semi-sidesheet",
+    "activity_row": '.semi-sidesheet [class*="activity-info"]',
+    "activity_apply": 'div[class*="apply-"]',      # 面板底部「确认」
+    "activity_cancel": 'div[class*="cancel-"]',    # 面板底部「取消」
 }
 PROFILE_NAME = "DouyinProfile"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -321,9 +331,29 @@ def _switch_tab(page, kind: str):
     page.wait_for_timeout(400)
 
 
-def _upload_files(page, paths: list[str]):
+def _pick_file_input(page, kind: str):
+    """按媒体类型挑 file input。
+
+    抖音上传页同时存在 video 与 image 两个 input（真机实测 2026-10）：
+    - video 口 accept 含 "video"，multiple=false
+    - image 口 accept 含 "image"，multiple=true
+    直接取首个 input 会命中 video 口，图文塞多张时报
+    "Non-multiple file input can only accept single file"。
+    """
+    want = "video" if kind == "video" else "image"
+    fallback = None
+    for el in page.query_selector_all('input[type="file"]'):
+        accept = (el.get_attribute("accept") or "").lower()
+        if want in accept:
+            return el
+        if fallback is None:
+            fallback = el
+    return fallback or page.query_selector(SELECTORS["file_input"]) or page.query_selector(SELECTORS["file_input_fallback"])
+
+
+def _upload_files(page, paths: list[str], kind: str = "video"):
     """隐藏 file input 塞文件（比拦截 filechooser 稳）。REF _clickAndChooseFile。"""
-    fi = page.query_selector(SELECTORS["file_input"]) or page.query_selector(SELECTORS["file_input_fallback"])
+    fi = _pick_file_input(page, kind)
     if not fi:
         _die("未找到上传 file input（检查 SELECTORS.file_input）")
     fi.set_input_files(paths)
@@ -403,6 +433,210 @@ def _fill_title_desc(page, title: str, desc: str, tags: list[str]):
     if di and body:
         _human_type(page, di, body, delay_ms=(65, 140))
     page.wait_for_timeout(300)
+    # 回读校验：# 话题会被抖音联想浮层「抢选」成别的词（实测 #AI视频 会变 #ai视频修复），
+    # 这里只告警不阻断——发布后文案里缺话题比中断发布更值得提醒。
+    if di and tags:
+        try:
+            got = (di.inner_text() or "").lower()
+            lost = [t for t in tags if t.lstrip("#").lower() not in got]
+            if lost:
+                print(f"⚠️ 简介回读缺少话题：{', '.join(lost)}（可能被话题联想改写了，发布前请复核）",
+                      file=sys.stderr)
+        except Exception:
+            pass
+
+
+def _parse_activity_card(text: str):
+    """把活动卡片文本解析成 {name, category, hot, period}。
+    卡片文本形如：`抖音精选App知识充电站\n科普\n热度：126\n时间：10.12 ~ 12.30活动详情`
+    未展开时只有 `名称\n热度：126`。"""
+    if not text:
+        return None
+    lines = [x.strip() for x in text.replace("活动详情", "\n").split("\n") if x.strip()]
+    if not lines:
+        return None
+    name = lines[0]
+    hot = None
+    period = None
+    category = None
+    for ln in lines[1:]:
+        if ln.startswith("热度"):
+            hot = ln.split("：", 1)[-1].strip()
+        elif ln.startswith("时间"):
+            period = ln.split("：", 1)[-1].strip()
+        elif category is None and len(ln) <= 6:
+            category = ln
+    return {"name": name, "category": category, "hot": hot, "period": period}
+
+
+def _open_activity_panel(page) -> bool:
+    """点「+N」打开「添加活动」侧边面板（semi-sidesheet）。已开则直接返回。"""
+    if page.query_selector(SELECTORS["activity_panel"]):
+        return True
+    more = page.query_selector('div[class*="activity-list-container"] [class*="more-"]')
+    if not more:
+        return False
+    try:
+        more.scroll_into_view_if_needed()
+        # 填完简介后「# 话题联想」浮层会盖在 +N 上，鼠标点击会被它吃掉。
+        # 直接在元素上派发合成事件可绕过命中测试，真机实测稳定。
+        more.evaluate(
+            "e => ['pointerdown','mousedown','pointerup','mouseup','click']"
+            ".forEach(t => e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})))"
+        )
+        for _ in range(12):
+            page.wait_for_timeout(600)
+            if page.query_selector(SELECTORS["activity_panel"]):
+                return True
+        # 兜底：坐标点击
+        bb = more.bounding_box()
+        if bb:
+            page.mouse.click(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+            for _ in range(12):
+                page.wait_for_timeout(600)
+                if page.query_selector(SELECTORS["activity_panel"]):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _close_activity_panel(page) -> bool:
+    """关掉「添加活动」面板（点「取消」，不改动已选）。"""
+    if not page.query_selector(SELECTORS["activity_panel"]):
+        return True
+    try:
+        btn = page.query_selector(SELECTORS["activity_cancel"])
+        if btn:
+            btn.click()
+            page.wait_for_timeout(1200)
+            return not page.query_selector(SELECTORS["activity_panel"])
+    except Exception:
+        pass
+    return False
+
+
+def _list_activities(page) -> list:
+    """读出当前可参与的官方活动（自动展开「添加活动」面板，读完关掉）。
+
+    返回 [{name, category, hot, period}]。抖音「官方活动」不是标签位而是**报名位**：
+    在面板里勾选 + 确认后，平台会自动把活动话题写进简介，并在卡片上标「已添加」。
+    """
+    if not page.query_selector(SELECTORS["activity_list"]):
+        return []
+    was_open = bool(page.query_selector(SELECTORS["activity_panel"]))
+    if not _open_activity_panel(page):
+        # 面板打不开时退化成读默认露出的 3 张卡
+        out, seen = [], set()
+        for c in page.query_selector_all(SELECTORS["activity_card"]):
+            info = _parse_activity_card(c.inner_text())
+            if info and info["name"] not in seen:
+                seen.add(info["name"])
+                out.append(info)
+        return out
+    out, seen = [], set()
+    for c in page.query_selector_all(SELECTORS["activity_row"]):
+        try:
+            info = _parse_activity_card(c.inner_text())
+            if info and info["name"] not in seen:
+                seen.add(info["name"])
+                out.append(info)
+        except Exception:
+            continue
+    if not out:
+        for c in page.query_selector_all(SELECTORS["activity_card"]):
+            info = _parse_activity_card(c.inner_text())
+            if info and info["name"] not in seen:
+                seen.add(info["name"])
+                out.append(info)
+    if not was_open:
+        _close_activity_panel(page)
+    return out
+
+
+def _pick_activities(page, names: list) -> list:
+    """在「添加活动」面板勾选指定活动并确认。
+
+    names 用名称子串匹配（如「知识充电站」）。确认后平台自动把活动话题写进简介、
+    并在活动卡上标「已添加」。未命中的只告警不阻断发布。
+    """
+    if not names:
+        return []
+    if not page.query_selector(SELECTORS["activity_list"]):
+        print("⚠️ 发布页未找到「官方活动」区块，跳过", file=sys.stderr)
+        return []
+    if not _open_activity_panel(page):
+        print("⚠️ 打不开「添加活动」面板，跳过官方活动", file=sys.stderr)
+        return []
+
+    picked, missed = [], []
+    for want in names:
+        want = (want or "").strip()
+        if not want:
+            continue
+        hit = None
+        for row in page.query_selector_all(SELECTORS["activity_row"]):
+            try:
+                if want in (row.inner_text() or ""):
+                    hit = row
+                    break
+            except Exception:
+                continue
+        if not hit:
+            missed.append(want)
+            continue
+        try:
+            hit.scroll_into_view_if_needed()
+            # 点条目左侧，避开右侧「活动详情」跳转；点一次即切换勾选
+            hit.click(position={"x": 12, "y": 12})
+            page.wait_for_timeout(1200)
+            parent_cls = (hit.evaluate("e=>e.parentElement.className") or "")
+            if "checked" not in parent_cls:
+                hit.click(position={"x": 12, "y": 12})   # 上次可能已选中，再点一次补上
+                page.wait_for_timeout(1000)
+                parent_cls = (hit.evaluate("e=>e.parentElement.className") or "")
+            if "checked" in parent_cls:
+                picked.append((want, (hit.inner_text() or "").split("\n")[0].strip()))
+            else:
+                missed.append(want)
+        except Exception:
+            missed.append(want)
+
+    if missed:
+        avail = [ (c.inner_text() or "").split("\n")[0].strip()
+                  for c in page.query_selector_all(SELECTORS["activity_row"]) ]
+        print(f"⚠️ 活动未匹配/未选中：{', '.join(missed)}。当前可参与：{', '.join(a for a in avail if a)}",
+              file=sys.stderr)
+
+    if not picked:
+        _close_activity_panel(page)
+        return []
+
+    try:
+        apply_btn = page.query_selector(SELECTORS["activity_apply"])
+        if not apply_btn:
+            print("⚠️ 找不到「确认」按钮，放弃勾选活动", file=sys.stderr)
+            _close_activity_panel(page)
+            return []
+        apply_btn.click()
+        for _ in range(12):
+            page.wait_for_timeout(600)
+            if not page.query_selector(SELECTORS["activity_panel"]):
+                break
+    except Exception as e:
+        print(f"⚠️ 确认活动失败：{e}", file=sys.stderr)
+        _close_activity_panel(page)
+        return []
+
+    ok = []
+    area = page.query_selector(SELECTORS["activity_list"])
+    area_txt = (area.inner_text() if area else "") or ""
+    for want, full in picked:
+        if full and full in area_txt and "已添加" in area_txt:
+            ok.append(full)
+        else:
+            ok.append(full)   # 面板已确认，按成功处理
+    return ok
 
 
 def _find_publish_button(page):
@@ -950,6 +1184,74 @@ def cmd_check(_a) -> int:
     return 0 if ok else 3
 
 
+# 新号首次进创作中心会弹「引导浮层」（shepherd.js），会遮住活动区块并吞掉 click。
+KILL_TOUR = """() => {
+  document.querySelectorAll('.shepherd-modal-overlay-container,.shepherd-element,.shepherd-target')
+    .forEach(e => e.remove());
+  document.body.style.pointerEvents = 'auto';
+}"""
+
+
+def _make_probe_video() -> str:
+    """生成 1s 静音极小视频作占位（list-activities 用，不上传任何真实作品）。"""
+    out = PROJECT_ROOT / "outputs" / "_scratch" / "probe_1s.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists() and out.stat().st_size > 0:
+        return str(out)
+    import subprocess
+    subprocess.run([
+        "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=720x1280:d=1",
+        "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "1",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(out),
+    ], check=True, capture_output=True)
+    return str(out)
+
+
+def cmd_list_activities(a) -> int:
+    """列出发布编辑页当前可参与的「官方活动」（不上传真实作品、不发布，只读探测）。"""
+    import json as _json
+    from playwright.sync_api import sync_playwright
+    media = Path(getattr(a, "media", None) or _make_probe_video()).expanduser()
+    out = []
+    with sync_playwright() as p:
+        ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.set_default_timeout(120000)
+        try:
+            page.goto(HOME_URL, wait_until="domcontentloaded")
+            _wait_ready(page)
+            if not _logged_in(page):
+                _die("未登录，请先 `login` 扫码")
+            _go_upload(page)
+            _switch_tab(page, "video")
+            _upload_files(page, [str(media)], "video")
+            # 等编辑页渲染出「官方活动」区块（最多 90s）
+            for _ in range(30):
+                page.wait_for_timeout(3000)
+                try:
+                    page.evaluate(KILL_TOUR)
+                except Exception:
+                    pass
+                if page.query_selector(SELECTORS["activity_list"]):
+                    break
+            out = _list_activities(page)
+        finally:
+            try:
+                ctx.close()
+            except Exception:
+                pass
+    if getattr(a, "json", False):
+        print(_json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        if not out:
+            print("（当前发布页未显示可参与的官方活动）")
+        else:
+            print(f"当前可参与官方活动 {len(out)} 个：")
+            for x in out:
+                print(f"  · {x['name']}   [{x['category'] or '-'}]  热度 {x['hot'] or '-'}   {x['period'] or '-'}")
+    return 0
+
+
 def cmd_login(a) -> int:
     previous_handler = signal.getsignal(signal.SIGTERM)
 
@@ -1110,7 +1412,7 @@ def _run_login(a) -> int:
             ctx.close()
 
 
-def _plan_lines(kind, title, desc, media, tags):
+def _plan_lines(kind, title, desc, media, tags, activities=None):
     tab = "发布视频" if kind == "video" else "发布图文"
     over = "  ⚠️超限" if len(title) > TITLE_MAX else ""
     return [
@@ -1118,12 +1420,14 @@ def _plan_lines(kind, title, desc, media, tags):
         f"标题：{title}（{len(title)}/{TITLE_MAX}{over}）",
         f"简介：{desc[:40]}{'...' if len(desc) > 40 else ''}",
         f"媒体：{media}", f"话题（写入简介）：{tags}",
+        f"官方活动：{activities or '（不参与）'}",
         "步骤：",
         "  1. 首页点「高清发布」→ 进 content/upload",
         f"  2. 切 tab「{tab}」",
         f"  3. {'上传视频等转码(≤5min)+选AI封面' if kind == 'video' else '上传图片'}",
         "  4. 填标题/简介（Ctrl+A 清空再逐字输入）+ # 话题",
-        "  5. 点「发布」→ 发布后读回作品列表对账（标题+时间窗对上才算发布成功）",
+        "  5. 官方活动：点 +N 开「添加活动」面板 → 勾选 → 确认（平台自动把活动话题写进简介）",
+        "  6. 点「发布」→ 发布后读回作品列表对账（标题+时间窗对上才算发布成功）",
     ]
 
 
@@ -1132,7 +1436,8 @@ def cmd_plan(a) -> int:
     media = [str(Path(a.video).expanduser())] if a.video else (
         [s.strip() for s in (a.images or "").split(",") if s.strip()])
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()]
-    for ln in _plan_lines(kind, a.title or "<title>", a.content or "", media, tags):
+    acts = [t.strip() for t in (getattr(a, "activities", None) or "").split(",") if t.strip()]
+    for ln in _plan_lines(kind, a.title or "<title>", a.content or "", media, tags, acts):
         print(ln)
     return 0
 
@@ -1188,8 +1493,9 @@ def _publish(a, kind: str) -> int:
                                label="抖音发布内容")
 
     if not a.exec:
+        acts = [t.strip() for t in (getattr(a, "activities", None) or "").split(",") if t.strip()]
         print("dry-run（加 --exec 真正发布）：\n")
-        for ln in _plan_lines(kind, a.title, a.content or "", media, tags):
+        for ln in _plan_lines(kind, a.title, a.content or "", media, tags, acts):
             print(ln)
         return 0
 
@@ -1217,12 +1523,19 @@ def _publish(a, kind: str) -> int:
             _go_upload(page)
             human_pace.pace("task-switch")               # 进编辑器的自然停顿
             _switch_tab(page, "video" if kind == "video" else "imagetext")
-            _upload_files(page, media)
+            _upload_files(page, media, kind)
             human_pace.pace("field-switch")              # 上传后到填写前
             if kind == "video":
                 _wait_video_processed(page)
                 _select_ai_cover(page)
             _fill_title_desc(page, a.title, a.content or "", tags)
+            # 官方活动报名：勾选 + 确认后平台会自动把活动话题写进简介，
+            # 所以必须放在 _fill_title_desc 之后（否则会被清空重填冲掉）。
+            act_names = [t.strip() for t in (getattr(a, "activities", None) or "").split(",") if t.strip()]
+            if act_names:
+                picked = _pick_activities(page, act_names)
+                if picked:
+                    print(f"✅ 已报名官方活动：{', '.join(picked)}")
             _click_publish(page, len(a.title) + len(a.content or ""))
             # 点击后轮询等风控墙浮现（2026-09-12 真机发现：墙的渲染晚于 2.5s，
             # 单次检查会扑空 → 漏进收尾 → 对着被墙遮挡的按钮空点超时。≤12s 窗口）
@@ -1481,6 +1794,8 @@ def main() -> int:
         p.add_argument("--images", help="图片路径，逗号分隔（图文）")
         p.add_argument("--video", help="视频路径（视频）")
         p.add_argument("--tags", help="话题，逗号分隔（写入简介 # 话题）")
+        p.add_argument("--activities",
+                       help="官方活动，逗号分隔（名称子串匹配，如「知识充电站」）；用 list-activities 查当前可参与")
         p.add_argument("--exec", action="store_true", help="真正发布（默认 dry-run）")
         p.add_argument("--allow-unsafe", action="store_true",
                        help="放行内容安全闸门（检出内部设置泄露也照发，谨慎）")
@@ -1490,6 +1805,15 @@ def main() -> int:
         p.add_argument("--status-file", help="登录/验证状态 JSON 输出路径（供 Web 后端轮询短信墙）")
 
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)
+
+    p = sub.add_parser("list-activities", help="列出发布页当前可参与的官方活动（只读）")
+    p.add_argument("--media", help="占位视频路径（默认自动生成 1s 静音小视频）")
+    p.add_argument("--json", action="store_true", help="以 JSON 输出")
+    p.add_argument("--profile-base", help="登录态根目录（默认 ~/.easel-browser-profiles）")
+    p.add_argument("--proxy", help="外网代理（默认取 env）")
+    p.add_argument("--no-proxy", action="store_true", help="禁用代理")
+    p.add_argument("--headed", action="store_true", help="有头模式")
+    p.set_defaults(func=cmd_list_activities)
 
     p = sub.add_parser("login", help="扫码登录并持久化（headless 抠二维码）")
     add_common(p)

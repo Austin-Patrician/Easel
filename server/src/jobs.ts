@@ -8,6 +8,12 @@ export interface JobEvent {
   data: string;
 }
 
+function encodeJobData(event: string, text?: string, extra?: Record<string, unknown>): string {
+  if (event === "question") return JSON.stringify(extra ?? {});
+  if (event === "done") return JSON.stringify(extra ?? {});
+  return JSON.stringify(text ?? "");
+}
+
 export class JobWriter {
   readonly file: string;
   private seq = 0;
@@ -25,10 +31,7 @@ export class JobWriter {
 
   write(event: string, text?: string, extra?: Record<string, unknown>): number {
     const id = this.nextId();
-    let data: string;
-    if (event === "question") data = JSON.stringify(extra ?? {});
-    else if (event === "done") data = JSON.stringify(extra ?? {});
-    else data = JSON.stringify(text ?? "");
+    const data = encodeJobData(event, text, extra);
     const line = JSON.stringify({ id, event, data });
     try {
       fs.appendFileSync(this.file, `${line}\n`, "utf8");
@@ -37,6 +40,28 @@ export class JobWriter {
     }
     return id;
   }
+}
+
+/**
+ * Append a terminal (or synthetic) event to an existing job log without
+ * truncating it. Used when a recovered job has no live turn behind it.
+ */
+export function appendJobEvent(
+  turnId: string,
+  event: string,
+  text?: string,
+  extra?: Record<string, unknown>,
+): number {
+  const file = jobEventFile(turnId);
+  const events = readJob(turnId);
+  const id = (events.length ? events[events.length - 1].id : 0) + 1;
+  const data = encodeJobData(event, text, extra);
+  try {
+    fs.appendFileSync(file, `${JSON.stringify({ id, event, data })}\n`, "utf8");
+  } catch {
+    // Keep the live response usable even if the durable log is gone.
+  }
+  return id;
 }
 
 function fileDir(file: string): string {
@@ -104,7 +129,7 @@ export function reconstructTurn(turnId: string): LastTurn {
       error = textValue;
       status = "failed";
     } else if (item.event === "done") {
-      status = "done";
+      status = error ? "failed" : "done";
     }
   }
   if (status === "failed" && error) text = `${text}\n\n❌ ${error}`;

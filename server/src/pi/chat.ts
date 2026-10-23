@@ -144,7 +144,33 @@ export function attachmentContext(sessionKey: string, attachments: AttachmentRef
   );
 }
 
-function bindSessionEvents(session: AgentSession, emit: EventSink): () => void {
+/**
+ * Extract the terminal model error from an `agent_end` event.
+ *
+ * `message_update` is only emitted for text/thinking/tool-call deltas; a failed
+ * model request arrives as `message_end` plus `agent_end`. Pi retries retryable
+ * failures, so only the final `agent_end` (`willRetry === false`) is terminal.
+ */
+export function terminalAssistantError(messages: readonly unknown[], willRetry: boolean): string {
+  if (willRetry) return "";
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as
+      | { role?: string; stopReason?: string; errorMessage?: string }
+      | undefined;
+    if (!message || message.role !== "assistant") continue;
+    if (message.stopReason === "error") {
+      return scrubSecrets(String(message.errorMessage || "模型返回错误"));
+    }
+    return "";
+  }
+  return "";
+}
+
+function bindSessionEvents(
+  session: AgentSession,
+  emit: EventSink,
+  onTerminalError?: (message: string) => void,
+): () => void {
   return session.subscribe((event) => {
     switch (event.type) {
       case "message_update": {
@@ -152,7 +178,6 @@ function bindSessionEvents(session: AgentSession, emit: EventSink): () => void {
         if (delta.type === "text_delta" && delta.delta) emit("token", delta.delta);
         else if (delta.type === "thinking_delta" && delta.delta) emit("thinking", delta.delta);
         else if (delta.type === "toolcall_start") emit("activity", "🔧 正在准备工具调用…");
-        else if (delta.type === "error") emit("error", scrubSecrets(delta.error.errorMessage || "模型返回错误"));
         break;
       }
       case "tool_execution_start":
@@ -161,6 +186,14 @@ function bindSessionEvents(session: AgentSession, emit: EventSink): () => void {
       case "tool_execution_end":
         if (event.isError) emit("activity", `⚠️ 工具 ${event.toolName} 执行失败，Agent 将继续处理`);
         break;
+      case "agent_end": {
+        const error = terminalAssistantError(event.messages, event.willRetry);
+        if (error) {
+          emit("error", error);
+          onTerminalError?.(error);
+        }
+        break;
+      }
       case "auto_retry_start":
         emit("activity", `模型请求失败，第 ${event.attempt}/${event.maxAttempts} 次重试…`);
         break;
@@ -197,8 +230,33 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
     let session: AgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
     const output: string[] = [];
+    let terminalError = "";
+    let promptSettled = false;
+    let terminalTimer: NodeJS.Timeout | undefined;
+    let rejectTerminalGuard: ((error: Error) => void) | undefined;
+    const terminalGuard = new Promise<never>((_, reject) => {
+      rejectTerminalGuard = reject;
+    });
+    const stopTerminalTimer = () => {
+      if (terminalTimer) {
+        clearTimeout(terminalTimer);
+        terminalTimer = undefined;
+      }
+    };
+    // A terminal model error means pi has already stopped the run. If the
+    // prompt promise still has not settled, force it open so the session lock
+    // cannot leave the next message waiting forever behind a dead turn.
+    const onTerminalError = (message: string) => {
+      stopTerminalTimer();
+      terminalTimer = setTimeout(() => {
+        if (promptSettled) return;
+        void session?.abort().catch(() => {});
+        rejectTerminalGuard?.(new Error(message));
+      }, 3000);
+    };
     const capture: EventSink = (kind, text, extra) => {
       if (kind === "token" && text) output.push(text);
+      if (kind === "error" && text) terminalError = text;
       emit(kind, text, extra);
     };
 
@@ -248,7 +306,7 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
       if (!binding) writeBinding(sessionKey, session.sessionFile ?? "");
 
       registerTurn({ sessionId, sessionKey, sandbox, approval, emit: capture });
-      unsubscribe = bindSessionEvents(session, capture);
+      unsubscribe = bindSessionEvents(session, capture, onTerminalError);
 
       await session.bindExtensions({
         uiContext: createEaselUI(sessionId, capture),
@@ -290,16 +348,23 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
       message = chatTurnMessage(message, request.persona);
 
       emit("activity", "⏳ 已收到，pi 正在处理…");
-      await session.prompt(message, { source: "interactive" });
-      return output.join("");
+      await Promise.race([
+        session.prompt(message, { source: "interactive" }),
+        terminalGuard,
+      ]);
+      promptSettled = true;
+      stopTerminalTimer();
     } catch (error) {
+      promptSettled = true;
+      stopTerminalTimer();
       const message = errorText(error);
-      if (message) {
+      if (message && message !== terminalError) {
+        terminalError = message;
         emit("error", message);
-        return `${output.join("")}\n\n❌ ${message}`;
       }
-      return output.join("");
     } finally {
+      promptSettled = true;
+      stopTerminalTimer();
       if (session) {
         const sessionId = session.sessionId;
         running.delete(sessionKey);
@@ -312,5 +377,7 @@ export async function runChatTurn(request: ChatTurnRequest): Promise<string> {
         }
       }
     }
+    const text = output.join("");
+    return terminalError ? `${text}${text ? "\n\n" : ""}❌ ${terminalError}` : text;
   });
 }

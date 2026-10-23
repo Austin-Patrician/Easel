@@ -59,7 +59,7 @@ import {
   savePiProvider,
 } from "./pi/models.js";
 import { runChatTurn, stopTurn, type AttachmentRef } from "./pi/chat.js";
-import { JobWriter, jobExists, readJob, readLastTurn, reconstructTurn, saveLastTurn } from "./jobs.js";
+import { JobWriter, appendJobEvent, jobExists, readJob, readLastTurn, reconstructTurn, saveLastTurn } from "./jobs.js";
 import { channelSelftest, modelChannels, saveModelRows } from "./model-channels.js";
 import { HttpError } from "./http.js";
 import { accountsRouter } from "./routes/accounts.js";
@@ -76,6 +76,10 @@ const PORT = Number(process.env.EASEL_PORT ?? 7860);
 const HOST = process.env.EASEL_HOST ?? "127.0.0.1";
 const MAX_UPLOAD_MB = 50;
 const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "easel-upload-"));
+// Jobs whose POST /api/chat/stream request is still being served by this
+// process. A persisted job without a terminal event and without an entry here
+// was orphaned by a restart/crash and must not heartbeat forever.
+const activeChatTurns = new Set<string>();
 
 function wrap(fn: (req: Request, res: Response, next: NextFunction) => unknown) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -719,6 +723,7 @@ app.post("/api/chat/stream", wrap(async (req, res) => {
 
   sseHeaders(res);
   const job = new JobWriter(tid);
+  activeChatTurns.add(tid);
   let failed = false;
   const emit = (kind: string, text?: string, extra?: Record<string, unknown>) => {
     if (kind === "error") failed = true;
@@ -749,7 +754,11 @@ app.post("/api/chat/stream", wrap(async (req, res) => {
     saveLastTurn(sid, { status: "failed", text: `${result}\n\n❌ ${text}`.trim(), turn_id: tid });
     emit("done", undefined, { sessionKey: sid });
   } finally {
-    if (!res.writableEnded && !res.destroyed) res.end();
+    try {
+      if (!res.writableEnded && !res.destroyed) res.end();
+    } finally {
+      activeChatTurns.delete(tid);
+    }
   }
 }));
 
@@ -761,6 +770,7 @@ app.get("/api/chat/jobs/:turnId/stream", wrap(async (req, res) => {
   let lastId = after;
   let closed = false;
   let ended = false;
+  let sawError = false;
   let heartbeat: NodeJS.Timeout | undefined;
   const cleanup = () => {
     closed = true;
@@ -776,11 +786,28 @@ app.get("/api/chat/jobs/:turnId/stream", wrap(async (req, res) => {
     for (const item of readJob(tid, lastId)) {
       lastId = item.id;
       writeSse(res, item.event, item.data, item.id);
+      if (item.event === "error") sawError = true;
       if (item.event === "done") ended = true;
     }
     if (ended) cleanup();
   };
   pump();
+  // No live POST stream owns this job and it never reached a terminal event:
+  // the previous process crashed/restarted mid-turn. Finalize it instead of
+  // heartbeating "still working" forever.
+  if (!ended && !activeChatTurns.has(tid)) {
+    const hasError = sawError || readJob(tid).some((item) => item.event === "error");
+    if (!hasError) {
+      const message = "上一轮任务已中断（后端可能已重启或异常退出），请重新发送。";
+      const errorId = appendJobEvent(tid, "error", message);
+      writeSse(res, "error", JSON.stringify(message), errorId);
+    }
+    const doneId = appendJobEvent(tid, "done", undefined, {});
+    writeSse(res, "done", JSON.stringify({}), doneId);
+    ended = true;
+    cleanup();
+    return;
+  }
   if (!ended) {
     heartbeat = setInterval(() => {
       if (closed) return;

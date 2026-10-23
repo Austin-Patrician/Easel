@@ -752,6 +752,9 @@ export function streamChat(
           let msg = '执行失败';
           try { msg = JSON.parse(data) as string; } catch { msg = data; }
           onError(new Error(msg));
+          // 终态错误已经交给 onError 收尾；主动取消底层阅读器，避免连接
+          // 在后台继续挂着并被误判为需要重连。
+          controller.abort();
           return true;
         } else if (currentEvent === 'done') {
           try { onDone((JSON.parse(data) as { sessionKey?: string }).sessionKey); } catch { onDone(); }
